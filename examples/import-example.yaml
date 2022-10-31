@@ -1,0 +1,10 @@
+apiVersion: tke.pandaria.io/v1
+kind: TKEClusterConfig
+metadata:
+  name: "<cluster-display-name>"
+  namespace: "<namespace>"
+spec:
+  imported: true
+  tkeCredentialSecret: "<namespace:name>"
+  clusterId: "<cluster-id>"
+  region: "ap-guangzhou"
