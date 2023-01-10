@@ -1,0 +1,79 @@
+apiVersion: tke.pandaria.io/v1
+kind: TKEClusterConfig
+metadata:
+  name: "<cluster-display-name>"
+  namespace: "<namespace>"
+spec:
+  tkeCredentialSecret: "<namespace:name>"
+  region: "ap-guangzhou"
+  imported: false
+  clusterEndpoint:
+    enable: true
+    subnetId: "subnet-gbc3blru"
+    securityGroup: "sg-ed6w3fih"
+  clusterBasicSettings:
+    clusterDescription: ""
+    clusterName: "<cluster-name>"
+    clusterOs: "tlinux3.1x86_64"
+    clusterType: "MANAGED_CLUSTER"
+    clusterVersion: "1.22.5"
+    vpcId: "vpc-8m6v0v47"
+    clusterLevel: "L5"
+    isAutoUpgrade: true
+  clusterCIDRSettings:
+    clusterCIDR: "172.16.0.0/16"
+    ignoreClusterCIDRConflict: true
+    maxClusterServiceNum: 1024
+    maxNodePodNum: 64
+    osCustomizeType: "GENERAL"
+    projectId: 0
+    tags:
+    - "aaa=bbb"
+  clusterAdvancedSettings:
+    asEnabled: false
+    auditEnabled: false
+    auditLogTopicId: ""
+    auditLogsetId: ""
+    containerRuntime: "docker"
+    deletionProtection: false
+    enableCustomizedPodCIDR: false
+    ipvs: false
+    isDualStack: false
+    networkType: "GR"
+    nodeNameType: "lan-ip"
+    qgpuShareEnable: false
+    runtimeVersion: "19.3"
+  nodePoolList:
+    - autoScalingGroupPara:
+        autoScalingGroupName: ""
+        maxSize: 1
+        minSize: 0
+        desiredCapacity: 1
+        vpcId: "vpc-8m6v0v47"
+        subnetIds:
+          - "subnet-gbc3blru"
+      launchConfigurePara:
+        launchConfigurationName: ""
+        instanceType: "SA2.MEDIUM2"
+        systemDisk:
+          diskSize: 50
+          diskType: "CLOUD_BSSD"
+        internetChargeType: "TRAFFIC_POSTPAID_BY_HOUR"
+        internetMaxBandwidthOut: 1
+        publicIpAssigned: true
+        dataDisks:
+        - diskSize: 50
+          diskType: "CLOUD_BSSD"
+        keyIds:
+        - "<key-id>"
+        securityGroupIds:
+          - "sg-05o50ep9"
+        instanceChargeType: "POSTPAID_BY_HOUR"
+      enableAutoscale: true
+      name: "<node-pool-name>"
+      labels: []
+      taints: []
+      nodePoolOs: "tlinux3.1x86_64"
+      osCustomizeType: "GENERAL"
+      tags: []
+      deletionProtection: false
