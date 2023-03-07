@@ -191,7 +191,7 @@ func (h *Handler) importCluster(config *tkev1.TKEClusterConfig) (*tkev1.TKEClust
 		return config, err
 	}
 
-	if err = h.createCASecret(driver, config); err != nil {
+	if err = h.createCASecret(driver, configUpdate); err != nil {
 		return config, err
 	}
 	configStatus := configUpdate.DeepCopy()
@@ -601,7 +601,7 @@ func BuildUpstreamClusterState(driver *tcdriver.Driver, cluster *tkeapi.Cluster,
 
 // createCASecret creates a secret containing a CA and endpoint for use in generating a kubeconfig file.
 func (h *Handler) createCASecret(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig) error {
-	kubeconfig, err := driver.TKEClient.GetClusterKubeconfig(config.Spec.ClusterID)
+	kubeconfig, err := driver.TKEClient.GetClusterKubeconfig(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable)
 	if err != nil {
 		return err
 	}

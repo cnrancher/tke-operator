@@ -340,10 +340,10 @@ func (t TKEClient) DeleteCluster(clusterId string) error {
 	return nil
 }
 
-func (t TKEClient) GetClusterKubeconfig(clusterId string) (*string, error) {
+func (t TKEClient) GetClusterKubeconfig(clusterId string, extranet bool) (*string, error) {
 	logrus.Infof("client tke action: GetClusterKubeconfig")
 	request := tkeapi.NewDescribeClusterKubeconfigRequest()
-	request.IsExtranet = tccommon.BoolPtr(true)
+	request.IsExtranet = tccommon.BoolPtr(extranet)
 	request.ClusterId = &clusterId
 
 	response, err := t.client.DescribeClusterKubeconfig(request)
