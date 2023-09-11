@@ -10,12 +10,12 @@ require (
 	github.com/rancher/wrangler v1.1.0
 	github.com/rancher/wrangler-api v0.6.1-0.20200427172631-a7c2f09b783e
 	github.com/sirupsen/logrus v1.8.1
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/as v1.0.612
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs v1.0.612
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.612
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.0.612
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.0.612
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.0.612
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/as v1.0.745
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs v1.0.745
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.745
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.0.745
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.0.745
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.0.745
 	k8s.io/api v0.25.4
 	k8s.io/apimachinery v0.25.4
 	k8s.io/client-go v0.25.4
