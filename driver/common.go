@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"github.com/cnrancher/tke-operator/driver/client"
 	"github.com/cnrancher/tke-operator/utils"
-	wranglerv1 "github.com/rancher/wrangler/v2/pkg/generated/controllers/core/v1"
+	wranglerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
 	tccommon "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	v1 "k8s.io/api/core/v1"
 )
 
 // state of cluster
@@ -96,6 +97,7 @@ func GetCredential(secretsCache wranglerv1.SecretCache, tkeCredentialSecret stri
 		return nil, fmt.Errorf("error while getting tkeCredentialSecret")
 	}
 
+	var secret *v1.Secret
 	ns, name := utils.Parse(tkeCredentialSecret)
 	secret, err := secretsCache.Get(ns, name)
 	if err != nil {
