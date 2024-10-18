@@ -5,6 +5,7 @@ source $(dirname $0)/version
 cd $(dirname $0)/..
 
 mkdir -p bin
+mkdir -p dist/artifacts
 if [ "$(uname)" = "Linux" ]; then
     OTHER_LINKFLAGS="-extldflags -static -s"
 fi
@@ -19,5 +20,6 @@ if [ -n "$CROSS" ]; then
         echo "building $os $arch binary"
         mkdir -p bin/$os/$arch
         GOOS=$os GOARCH=$arch go build -ldflags "$FLAGS" -o bin/$os/$arch/tke-operator
+        cp bin/$os/$arch/tke-operator dist/artifacts/tke-operator-$os-$arch
     done
 fi

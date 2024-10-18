@@ -9,14 +9,6 @@ if echo $TAG | grep -q dirty; then
     TAG=dev
 fi
 
-mkdir -p dist/artifacts
-cp bin/tke-operator dist/artifacts/tke-operator-linux${SUFFIX}
-for i in bin/tke-operator-*; do
-    if [ -e "$i" ]; then
-          cp $i dist/artifacts
-    fi
-done
-
 IMAGE=${REPO}/tke-operator:${TAG}
 DOCKERFILE=package/Dockerfile
 if [ -e ${DOCKERFILE}.${ARCH} ]; then
