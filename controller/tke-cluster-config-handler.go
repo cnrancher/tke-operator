@@ -394,7 +394,8 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 				updateNodePoolInstanceTypes = append(updateNodePoolInstanceTypes, configNp)
 			}
 
-			if configNp.AutoScalingGroupPara.DesiredCapacity != upstreamNp.AutoScalingGroupPara.DesiredCapacity {
+			if (configNp.AutoScalingGroupPara.DesiredCapacity != upstreamNp.AutoScalingGroupPara.DesiredCapacity) &&
+				(configNp.AutoScalingGroupPara.DesiredCapacity <= upstreamNp.AutoScalingGroupPara.MaxSize) {
 				updateNodePoolDesiredCapacity = append(updateNodePoolDesiredCapacity, configNp)
 			}
 
@@ -422,6 +423,15 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		updatingNodePools = true
 	}
 
+	if len(updateNodePoolDesiredCapacity) > 0 {
+		for _, np := range updateNodePoolDesiredCapacity {
+			if err := driver.TKEClient.ModifyNodePoolDesiredCapacityAboutAsg(config.Spec.ClusterID, np.NodePoolID, np.AutoScalingGroupPara.DesiredCapacity); err != nil {
+				return config, err
+			}
+		}
+		updatingNodePools = true
+	}
+
 	if len(updateNodePool) > 0 {
 		for _, np := range updateNodePool {
 			if err := driver.TKEClient.ModifyClusterNodePool(config.Spec.ClusterID, np); err != nil {
@@ -434,24 +444,6 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 	if len(updateNodePoolInstanceTypes) > 0 {
 		for _, np := range updateNodePoolInstanceTypes {
 			if err := driver.TKEClient.ModifyNodePoolInstanceTypes(config.Spec.ClusterID, np.NodePoolID, np.LaunchConfigurePara.InstanceType); err != nil {
-				return config, err
-			}
-		}
-		updatingNodePools = true
-	}
-
-	if len(updateNodePool) > 0 {
-		for _, np := range updateNodePool {
-			if err := driver.TKEClient.ModifyClusterNodePool(config.Spec.ClusterID, np); err != nil {
-				return config, err
-			}
-		}
-		updatingNodePools = true
-	}
-
-	if len(updateNodePoolDesiredCapacity) > 0 {
-		for _, np := range updateNodePoolDesiredCapacity {
-			if err := driver.TKEClient.ModifyNodePoolDesiredCapacityAboutAsg(config.Spec.ClusterID, np.NodePoolID, np.AutoScalingGroupPara.DesiredCapacity); err != nil {
 				return config, err
 			}
 		}
