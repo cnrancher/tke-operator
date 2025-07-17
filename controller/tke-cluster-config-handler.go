@@ -194,6 +194,7 @@ func (h *Handler) importCluster(config *tkev1.TKEClusterConfig) (*tkev1.TKEClust
 	if err = h.createCASecret(driver, configUpdate); err != nil {
 		return config, err
 	}
+
 	configStatus := configUpdate.DeepCopy()
 	configStatus.Status.Phase = tkeConfigActivePhase
 	return h.tkeCC.UpdateStatus(configStatus)
@@ -343,16 +344,18 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 
 // updateUpstreamClusterState sync config to upstream cluster
 func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig, upstreamSpec *tkev1.TKEClusterConfigSpec) (*tkev1.TKEClusterConfig, error) {
-	if config.Spec.ClusterBasicSettings.ProjectID != upstreamSpec.ClusterBasicSettings.ProjectID ||
-		config.Spec.ClusterBasicSettings.ClusterName != upstreamSpec.ClusterBasicSettings.ClusterName ||
-		config.Spec.ClusterBasicSettings.ClusterDescription != upstreamSpec.ClusterBasicSettings.ClusterDescription ||
-		config.Spec.ClusterBasicSettings.ClusterLevel != upstreamSpec.ClusterBasicSettings.ClusterLevel ||
-		config.Spec.ClusterBasicSettings.IsAutoUpgrade != upstreamSpec.ClusterBasicSettings.IsAutoUpgrade ||
-		config.Spec.ClusterAdvancedSettings.QGPUShareEnable != upstreamSpec.ClusterAdvancedSettings.QGPUShareEnable {
-		if _, err := driver.TKEClient.ModifyClusterAttribute(&config.Spec); err != nil {
-			return config, err
+	if config.Spec.ClusterBasicSettings != nil && config.Spec.ClusterAdvancedSettings != nil {
+		if config.Spec.ClusterBasicSettings.ProjectID != upstreamSpec.ClusterBasicSettings.ProjectID ||
+			config.Spec.ClusterBasicSettings.ClusterName != upstreamSpec.ClusterBasicSettings.ClusterName ||
+			config.Spec.ClusterBasicSettings.ClusterDescription != upstreamSpec.ClusterBasicSettings.ClusterDescription ||
+			config.Spec.ClusterBasicSettings.ClusterLevel != upstreamSpec.ClusterBasicSettings.ClusterLevel ||
+			config.Spec.ClusterBasicSettings.IsAutoUpgrade != upstreamSpec.ClusterBasicSettings.IsAutoUpgrade ||
+			config.Spec.ClusterAdvancedSettings.QGPUShareEnable != upstreamSpec.ClusterAdvancedSettings.QGPUShareEnable {
+			if _, err := driver.TKEClient.ModifyClusterAttribute(&config.Spec); err != nil {
+				return config, err
+			}
+			return h.enqueueUpdate(config)
 		}
-		return h.enqueueUpdate(config)
 	}
 
 	if config.Spec.NodePoolList == nil {
