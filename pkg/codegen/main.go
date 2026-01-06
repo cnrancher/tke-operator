@@ -5,7 +5,6 @@ import (
 	"os"
 
 	v12 "github.com/cnrancher/tke-operator/pkg/apis/tke.pandaria.io/v1"
-	_ "github.com/rancher/wrangler-api/pkg/generated/controllers/apiextensions.k8s.io"
 	controllergen "github.com/rancher/wrangler/v3/pkg/controller-gen"
 	"github.com/rancher/wrangler/v3/pkg/controller-gen/args"
 	"github.com/rancher/wrangler/v3/pkg/crd"

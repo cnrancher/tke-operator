@@ -75,6 +75,5 @@ jobs:
     - name: Hangar Sign
       uses: cnrancher/hangar/.github/actions/hangar-sign@main
       with:
-        version: v1.9.0-beta.14
         images: |
           registry.rancher.cn/cnrancher/tke-operator:${{ github.ref_name }}
