@@ -101,6 +101,7 @@ func (h *Handler) recordError(onChange func(key string, config *tkev1.TKECluster
 		}
 		if err != nil {
 			message = err.Error()
+			logrus.Errorf("TKEClusterConfig [%s] sync error: %v", config.Name, err)
 		}
 
 		if config.Status.FailureMessage == message {
@@ -376,6 +377,7 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		if np.NodePoolID == "" {
 			responseNodePoolId, err := driver.TKEClient.CreateClusterNodePool(config.Spec.ClusterID, np)
 			if err != nil {
+				logrus.Errorf("cluster [%s] failed to create node pool [%s]: %v", config.Name, np.Name, err)
 				return config, err
 			}
 			config.Spec.NodePoolList[index].NodePoolID = *responseNodePoolId
