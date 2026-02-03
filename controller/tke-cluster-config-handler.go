@@ -42,6 +42,7 @@ var backoff = wait.Backoff{
 
 type Handler struct {
 	tkeCC           v12.TKEClusterConfigClient
+	tkeCache        v12.TKEClusterConfigCache
 	tkeEnqueueAfter func(namespace, name string, duration time.Duration)
 	tkeEnqueue      func(namespace, name string)
 	secrets         wranglerv1.SecretClient
@@ -55,6 +56,7 @@ func Register(
 
 	controller := &Handler{
 		tkeCC:           tke,
+		tkeCache:        tke.Cache(),
 		tkeEnqueue:      tke.Enqueue,
 		tkeEnqueueAfter: tke.EnqueueAfter,
 		secretsCache:    secrets.Cache(),
@@ -227,17 +229,51 @@ func (h *Handler) create(config *tkev1.TKEClusterConfig) (*tkev1.TKEClusterConfi
 			return config, err
 		}
 
-		configUpdate := config.DeepCopy()
-		configUpdate.Spec.ClusterID = *responseClusterId
-		configUpdate, err = h.tkeCC.Update(configUpdate)
+		// Use RetryOnConflict to prevent repeated creation when Update fails
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			result, getErr := h.tkeCache.Get(config.Namespace, config.Name)
+			if getErr != nil {
+				return fmt.Errorf("failed to get tkeConfig from cache: %w", getErr)
+			}
+			if result.Spec.ClusterID == *responseClusterId {
+				config = result
+				return nil
+			}
+
+			result = result.DeepCopy()
+			result.Spec.ClusterID = *responseClusterId
+			result, getErr = h.tkeCC.Update(result)
+			if getErr != nil {
+				return getErr
+			}
+			config = result
+			return nil
+		})
 		if err != nil {
 			return config, err
 		}
 
-		logrus.Infof("current cluster id: %s", configUpdate.Spec.ClusterID)
-		configStatus := configUpdate.DeepCopy()
-		configStatus.Status.Phase = tkeConfigCreatingPhase
-		config, err = h.tkeCC.UpdateStatus(configStatus)
+		logrus.Infof("current cluster id: %s", config.Spec.ClusterID)
+		// Update status to creating phase
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			result, getErr := h.tkeCache.Get(config.Namespace, config.Name)
+			if getErr != nil {
+				return getErr
+			}
+			if result.Status.Phase == tkeConfigCreatingPhase && result.Status.FailureMessage == "" {
+				config = result
+				return nil
+			}
+			result = result.DeepCopy()
+			result.Status.Phase = tkeConfigCreatingPhase
+			result.Status.FailureMessage = ""
+			result, getErr = h.tkeCC.UpdateStatus(result)
+			if getErr != nil {
+				return getErr
+			}
+			config = result
+			return nil
+		})
 		if err != nil {
 			return config, err
 		}
