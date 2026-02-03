@@ -411,11 +411,14 @@ func (t TKEClient) UpdateClusterVersion(configSpec *tkev1.TKEClusterConfigSpec) 
 	request := tkeapi.NewUpdateClusterVersionRequest()
 	request.ClusterId = &configSpec.ClusterID
 	request.DstVersion = &configSpec.ClusterBasicSettings.ClusterVersion
-	request.ExtraArgs = &tkeapi.ClusterExtraArgs{
-		KubeAPIServer:         utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeAPIServer),
-		KubeControllerManager: utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeControllerManager),
-		KubeScheduler:         utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeScheduler),
-		Etcd:                  utils.ParseStrings(configSpec.ClusterAdvancedSettings.Etcd),
+	// Only set ExtraArgs when ClusterAdvancedSettings is present; otherwise leave nil for API default.
+	if configSpec.ClusterAdvancedSettings != nil {
+		request.ExtraArgs = &tkeapi.ClusterExtraArgs{
+			KubeAPIServer:         utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeAPIServer),
+			KubeControllerManager: utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeControllerManager),
+			KubeScheduler:         utils.ParseStrings(configSpec.ClusterAdvancedSettings.KubeScheduler),
+			Etcd:                  utils.ParseStrings(configSpec.ClusterAdvancedSettings.Etcd),
+		}
 	}
 
 	response, err := t.client.UpdateClusterVersion(request)
