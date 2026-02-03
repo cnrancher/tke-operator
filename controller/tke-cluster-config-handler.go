@@ -381,6 +381,20 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 
 // updateUpstreamClusterState sync config to upstream cluster
 func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig, upstreamSpec *tkev1.TKEClusterConfigSpec) (*tkev1.TKEClusterConfig, error) {
+	// Check kubernetes version for upgrade cluster.
+	if config.Spec.ClusterBasicSettings != nil && upstreamSpec.ClusterBasicSettings != nil {
+		if config.Spec.ClusterBasicSettings.ClusterVersion != upstreamSpec.ClusterBasicSettings.ClusterVersion {
+			logrus.Infof("cluster [%s] version upgrade detected: %s -> %s",
+				config.Name,
+				upstreamSpec.ClusterBasicSettings.ClusterVersion,
+				config.Spec.ClusterBasicSettings.ClusterVersion)
+			if _, err := driver.TKEClient.UpdateClusterVersion(&config.Spec); err != nil {
+				return config, err
+			}
+			return h.enqueueUpdate(config)
+		}
+	}
+
 	if config.Spec.ClusterBasicSettings != nil && config.Spec.ClusterAdvancedSettings != nil {
 		if config.Spec.ClusterBasicSettings.ProjectID != upstreamSpec.ClusterBasicSettings.ProjectID ||
 			config.Spec.ClusterBasicSettings.ClusterName != upstreamSpec.ClusterBasicSettings.ClusterName ||
