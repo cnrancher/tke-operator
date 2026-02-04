@@ -141,21 +141,87 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 	}
 
 	if err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-		if config.Spec.ClusterID != "" {
-			driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
-			if err != nil {
-				return false, err
-			}
+		if config.Spec.ClusterID == "" {
+			logrus.Infof("cluster [%s] has no ClusterID, already deleted", config.Name)
+			return true, nil
+		}
 
-			logrus.Infof("removing cluster %v , region %v", config.Name, config.Spec.Region)
-			if err := driver.TKEClient.DeleteCluster(config.Spec.ClusterID); err != nil {
-				if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok && sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
-					logrus.Infof("cluster %v , region %v already removed", config.Name, config.Spec.Region)
+		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+		if err != nil {
+			return false, err
+		}
+
+		// Check and delete node pools first
+		nodePools, err := driver.TKEClient.GetClusterNodePools(config.Spec.ClusterID)
+		if err != nil {
+			// If cluster not found, it means cluster is already deleted
+			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+				if sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
+					logrus.Infof("cluster [%s] not found, already removed", config.Name)
 					return true, nil
 				}
-				return false, err
 			}
+			logrus.Warnf("failed to get node pools for cluster [%s]: %v", config.Name, err)
+			return false, err
 		}
+
+		// If there are node pools, delete them first and wait
+		if len(nodePools) > 0 {
+			var needDeletePoolIds []*string
+			for _, np := range nodePools {
+				if np.NodePoolId == nil || *np.NodePoolId == "" {
+					continue
+				}
+				// Only delete node pools that are not being deleted yet
+				if np.LifeState != nil {
+					state := *np.LifeState
+					if state == tcdriver.NodePoolStatusDeleting || state == tcdriver.NodePoolStatusDeleted {
+						// Already being deleted, skip
+						continue
+					}
+				}
+				needDeletePoolIds = append(needDeletePoolIds, np.NodePoolId)
+			}
+
+			// Request deletion for node pools that need it
+			if len(needDeletePoolIds) > 0 {
+				logrus.Infof("requesting deletion of %d node pool(s) for cluster [%s]", len(needDeletePoolIds), config.Name)
+				if err := driver.TKEClient.DeleteNodePool(config.Spec.ClusterID, needDeletePoolIds); err != nil {
+					if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+						if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
+							// Already deleted, continue waiting
+							logrus.Infof("node pools already deleted for cluster [%s]", config.Name)
+						} else {
+							logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
+							return false, err
+						}
+					} else {
+						logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
+						return false, err
+					}
+				}
+			}
+
+			// Wait for all node pools to be deleted (regardless of whether we just requested deletion)
+			logrus.Infof("cluster [%s] still has %d node pool(s), waiting for deletion to complete", config.Name, len(nodePools))
+			return false, nil
+		}
+
+		// All node pools deleted, now delete the cluster
+		logrus.Infof("removing cluster %v, region %v", config.Name, config.Spec.Region)
+		if err := driver.TKEClient.DeleteCluster(config.Spec.ClusterID); err != nil {
+			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+				if sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
+					logrus.Infof("cluster %v, region %v already removed", config.Name, config.Spec.Region)
+					return true, nil
+				}
+			}
+			// Any other error should be reported
+			logrus.Errorf("failed to delete cluster [%v]: %v", config.Name, err)
+			return false, err
+		}
+
+		logrus.Infof("cluster %v deletion requested successfully", config.Name)
 		return true, nil
 	}); err != nil {
 		return config, err
