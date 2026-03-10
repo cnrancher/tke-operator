@@ -9,6 +9,7 @@ import (
 	tcdriver "github.com/cnrancher/tke-operator/driver"
 	tkev1 "github.com/cnrancher/tke-operator/pkg/apis/tke.pandaria.io/v1"
 	v12 "github.com/cnrancher/tke-operator/pkg/generated/controllers/tke.pandaria.io/v1"
+	"github.com/cnrancher/tke-operator/pkg/tkeapifull"
 	"github.com/cnrancher/tke-operator/utils"
 	wranglerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
 	"github.com/rancher/wrangler/v3/pkg/slice"
@@ -152,62 +153,26 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 		}
 
 		// Check and delete node pools first
-		nodePools, err := driver.TKEClient.GetClusterNodePools(config.Spec.ClusterID)
+		done, err := h.ensureNodePoolsDeleted(driver, config)
 		if err != nil {
-			// If cluster not found, it means cluster is already deleted
-			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
-				if sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
-					logrus.Infof("cluster [%s] not found, already removed", config.Name)
-					return true, nil
-				}
-			}
-			logrus.Warnf("failed to get node pools for cluster [%s]: %v", config.Name, err)
 			return false, err
 		}
-
-		// If there are node pools, delete them first and wait
-		if len(nodePools) > 0 {
-			var needDeletePoolIds []*string
-			for _, np := range nodePools {
-				if np.NodePoolId == nil || *np.NodePoolId == "" {
-					continue
-				}
-				// Only delete node pools that are not being deleted yet
-				if np.LifeState != nil {
-					state := *np.LifeState
-					if state == tcdriver.NodePoolStatusDeleting || state == tcdriver.NodePoolStatusDeleted {
-						// Already being deleted, skip
-						continue
-					}
-				}
-				needDeletePoolIds = append(needDeletePoolIds, np.NodePoolId)
-			}
-
-			// Request deletion for node pools that need it
-			if len(needDeletePoolIds) > 0 {
-				logrus.Infof("requesting deletion of %d node pool(s) for cluster [%s]", len(needDeletePoolIds), config.Name)
-				if err := driver.TKEClient.DeleteNodePool(config.Spec.ClusterID, needDeletePoolIds); err != nil {
-					if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
-						if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
-							// Already deleted, continue waiting
-							logrus.Infof("node pools already deleted for cluster [%s]", config.Name)
-						} else {
-							logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
-							return false, err
-						}
-					} else {
-						logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
-						return false, err
-					}
-				}
-			}
-
-			// Wait for all node pools to be deleted (regardless of whether we just requested deletion)
-			logrus.Infof("cluster [%s] still has %d node pool(s), waiting for deletion to complete", config.Name, len(nodePools))
+		if !done {
+			// node pools still exist, keep waiting
 			return false, nil
 		}
 
-		// All node pools deleted, now delete the cluster
+		// Check and delete virtual node pools before deleting the cluster
+		done, err = h.ensureVirtualNodePoolsDeleted(driver, config)
+		if err != nil {
+			return false, err
+		}
+		if !done {
+			// virtual node pools still exist, keep waiting
+			return false, nil
+		}
+
+		// All virtual node pools deleted, now delete the cluster
 		logrus.Infof("removing cluster %v, region %v", config.Name, config.Spec.Region)
 		if err := driver.TKEClient.DeleteCluster(config.Spec.ClusterID); err != nil {
 			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
@@ -255,6 +220,11 @@ func (h *Handler) importCluster(config *tkev1.TKEClusterConfig) (*tkev1.TKEClust
 
 	configUpdate := config.DeepCopy()
 	configUpdate.Spec = *FixConfig(driver, &config.Spec, cluster, nodePools)
+
+	configUpdate.Spec.VirtualNodePoolList, err = BuildUpstreamVirtualNodePoolList(driver, config.Spec.ClusterID, config.Spec.VirtualNodePoolList)
+	if err != nil {
+		return config, err
+	}
 	configUpdate, err = h.tkeCC.Update(configUpdate)
 	if err != nil {
 		return config, err
@@ -380,6 +350,9 @@ func (h *Handler) waitForCreationComplete(config *tkev1.TKEClusterConfig) (*tkev
 
 func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClusterConfig, error) {
 	logrus.Infof("handler cluster update...")
+	logrus.Infof("cluster [%s] phase=%s clusterID=%s nodePools=%d virtualNodePools=%d",
+		config.Name, config.Status.Phase, config.Spec.ClusterID,
+		len(config.Spec.NodePoolList), len(config.Spec.VirtualNodePoolList))
 	if err := h.validate(config); err != nil {
 		config = config.DeepCopy()
 		config.Status.Phase = tkeConfigUpdatingPhase
@@ -437,6 +410,31 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 		}
 	}
 
+	if len(config.Spec.VirtualNodePoolList) > 0 {
+		virtualNodePools, err := driver.TKEClient.GetClusterVirtualNodePoolsFull(config.Spec.ClusterID)
+		if err != nil {
+			return config, err
+		}
+		for _, vp := range virtualNodePools {
+			state := vp.LifeState
+			if state == tcdriver.NodePoolStatusCreating ||
+				state == tcdriver.NodePoolStatusDeleting ||
+				state == tcdriver.NodePoolStatusUpdating {
+				if config.Status.Phase != tkeConfigUpdatingPhase {
+					config = config.DeepCopy()
+					config.Status.Phase = tkeConfigUpdatingPhase
+					config, err = h.tkeCC.UpdateStatus(config)
+					if err != nil {
+						return config, err
+					}
+				}
+				logrus.Infof("waiting for cluster [%s] virtual node pool [%s] state [%s]", config.Name, vp.Name, state)
+				h.tkeEnqueueAfter(config.Namespace, config.Name, 30*time.Second)
+				return config, nil
+			}
+		}
+	}
+
 	upstreamSpec, err := BuildUpstreamClusterState(driver, cluster, nodePools)
 	if err != nil {
 		return config, err
@@ -475,7 +473,10 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		}
 	}
 
-	if config.Spec.NodePoolList == nil {
+	logrus.Infof("cluster [%s] updateUpstreamClusterState: nodePools=%d virtualNodePools=%d",
+		config.Name, len(config.Spec.NodePoolList), len(config.Spec.VirtualNodePoolList))
+
+	if config.Spec.NodePoolList == nil && config.Spec.VirtualNodePoolList == nil {
 		logrus.Infof("cluster [%s] finished updating", config.Name)
 		config = config.DeepCopy()
 		config.Status.Phase = tkeConfigActivePhase
@@ -575,6 +576,179 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		return h.enqueueUpdate(config)
 	}
 
+	// Reconcile virtual node pools.
+	// Match regular node pool flow: create what config wants but upstream doesn't have,
+	// modify what differs, delete what upstream has but config doesn't want.
+	upstreamList, err := driver.TKEClient.GetClusterVirtualNodePoolsFull(config.Spec.ClusterID)
+	if err != nil {
+		return config, err
+	}
+
+	// Build config set by NodePoolID and Name (config's desired pools)
+	configVirtualNodePoolByID := make(map[string]struct{})
+	configVirtualNodePoolByName := make(map[string]struct{})
+	for _, vp := range config.Spec.VirtualNodePoolList {
+		if vp.NodePoolID != "" {
+			configVirtualNodePoolByID[vp.NodePoolID] = struct{}{}
+		}
+		if vp.Name != "" {
+			configVirtualNodePoolByName[vp.Name] = struct{}{}
+		}
+	}
+
+	// Delete virtual node pools that exist upstream but not in config
+	var deleteVirtualNodePoolIds []*string
+	for i := range upstreamList {
+		u := &upstreamList[i]
+		if u.NodePoolId == "" {
+			continue
+		}
+		if u.LifeState != "" {
+			state := u.LifeState
+			if state == tcdriver.NodePoolStatusDeleting || state == tcdriver.NodePoolStatusDeleted {
+				continue
+			}
+		}
+		inConfig := false
+		if _, ok := configVirtualNodePoolByID[u.NodePoolId]; ok {
+			inConfig = true
+		}
+		if !inConfig && u.Name != "" {
+			if _, ok := configVirtualNodePoolByName[u.Name]; ok {
+				inConfig = true
+			}
+		}
+		if !inConfig {
+			logrus.Infof("Virtual node pool [%s] will be deleted (not in config)", u.NodePoolId)
+			poolID := u.NodePoolId
+			deleteVirtualNodePoolIds = append(deleteVirtualNodePoolIds, &poolID)
+		}
+	}
+	if len(deleteVirtualNodePoolIds) > 0 {
+		if err := driver.TKEClient.DeleteClusterVirtualNodePool(config.Spec.ClusterID, deleteVirtualNodePoolIds, true); err != nil {
+			logrus.Errorf("cluster [%s] failed to delete virtual node pool(s): %v", config.Name, err)
+			return config, err
+		}
+		return h.enqueueUpdate(config)
+	}
+
+	// Create and modify virtual node pools when config has desired pools
+	if len(config.Spec.VirtualNodePoolList) > 0 {
+		upstreamByName := make(map[string]*tkeapifull.VirtualNodePool)
+		upstreamByID := make(map[string]*tkeapifull.VirtualNodePool)
+		for i := range upstreamList {
+			u := &upstreamList[i]
+			if u.Name != "" {
+				upstreamByName[u.Name] = u
+			}
+			if u.NodePoolId != "" {
+				upstreamByID[u.NodePoolId] = u
+			}
+		}
+
+		// Create missing virtual node pools. If any created, return immediately so we don't
+		// mix create and update in the same reconcile. This preserves the creation flow.
+		var createdAny bool
+		for index, vp := range config.Spec.VirtualNodePoolList {
+			existing := upstreamByName[vp.Name]
+			if existing == nil && vp.NodePoolID != "" {
+				existing = upstreamByID[vp.NodePoolID]
+			}
+			if existing != nil {
+				// Pool already exists upstream. Set nodePoolId locally so downstream logic can use it,
+				// but do NOT write back to the CR: writing back triggers a new reconcile which Rancher
+				// may overwrite with nodePoolId="" again, causing an infinite adoption loop.
+				if existing.NodePoolId != "" {
+					config.Spec.VirtualNodePoolList[index].NodePoolID = existing.NodePoolId
+				}
+				continue
+			}
+			// existing still nil: new pool (nodePoolId empty) or stale row (nodePoolId left from Rancher spec).
+			if vp.NodePoolID != "" {
+				logrus.Warnf("cluster [%s] virtual node pool [%s] nodePoolId=%s not found upstream, skip create (stale spec)",
+					config.Name, vp.Name, vp.NodePoolID)
+				continue
+			}
+			responsePoolId, err := driver.TKEClient.CreateClusterVirtualNodePool(config.Spec.ClusterID, vp)
+			if err != nil {
+				logrus.Errorf("cluster [%s] failed to create virtual node pool [%s]: %v", config.Name, vp.Name, err)
+				return config, err
+			}
+			logrus.Infof("cluster [%s] created virtual node pool [%s] with id [%s]", config.Name, vp.Name, *responsePoolId)
+			config.Spec.VirtualNodePoolList[index].NodePoolID = *responsePoolId
+			createdAny = true
+		}
+
+		if createdAny {
+			// Write back nodePoolIds for newly created pools so they are visible in the UI.
+			filledByName := make(map[string]string)
+			for _, vp := range config.Spec.VirtualNodePoolList {
+				if vp.NodePoolID != "" {
+					filledByName[vp.Name] = vp.NodePoolID
+				}
+			}
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				result, getErr := h.tkeCache.Get(config.Namespace, config.Name)
+				if getErr != nil {
+					return fmt.Errorf("failed to get tkeConfig from cache: %w", getErr)
+				}
+				result = result.DeepCopy()
+				for i := range result.Spec.VirtualNodePoolList {
+					vp := &result.Spec.VirtualNodePoolList[i]
+					if vp.NodePoolID == "" {
+						if id, ok := filledByName[vp.Name]; ok {
+							vp.NodePoolID = id
+						}
+					}
+				}
+				result.Status.Phase = tkeConfigUpdatingPhase
+				result, getErr = h.tkeCC.Update(result)
+				if getErr != nil {
+					return getErr
+				}
+				config = result
+				return nil
+			})
+			if err != nil {
+				return config, err
+			}
+			return config, nil
+		}
+
+		// Update existing virtual node pools: compare spec to upstream Describe (full JSON) for
+		// modifiable fields only; send only differing fields to Modify.
+		var updatingVirtualNodePools bool
+		for index, vp := range config.Spec.VirtualNodePoolList {
+			existing := upstreamByName[vp.Name]
+			if existing == nil && vp.NodePoolID != "" {
+				existing = upstreamByID[vp.NodePoolID]
+			}
+			if existing == nil || existing.NodePoolId == "" {
+				continue
+			}
+			upstreamDetail := existing.ToDetail()
+			modifyFields := utils.DiffVirtualNodePoolModifyFields(vp, upstreamDetail)
+			if modifyFields == nil {
+				config.Spec.VirtualNodePoolList[index].NodePoolID = existing.NodePoolId
+				continue
+			}
+			applied, err := driver.TKEClient.ModifyClusterVirtualNodePool(config.Spec.ClusterID, existing.NodePoolId, modifyFields)
+			if err != nil {
+				logrus.Errorf("cluster [%s] failed to modify virtual node pool [%s]: %v", config.Name, vp.Name, err)
+				return config, err
+			}
+			if applied {
+				logrus.Infof("cluster [%s] modified virtual node pool [%s]", config.Name, vp.Name)
+				updatingVirtualNodePools = true
+			}
+			config.Spec.VirtualNodePoolList[index].NodePoolID = existing.NodePoolId
+		}
+
+		if updatingVirtualNodePools {
+			return h.enqueueUpdate(config)
+		}
+	}
+
 	if !config.Spec.Imported {
 		logrus.Infof("cluster endpoint enable")
 		endpointStatus, err := driver.TKEClient.GetClusterEndpointStatus(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable)
@@ -588,17 +762,29 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 				return config, err
 			}
 		case tcdriver.EndpointStatusNotFound:
-			instances, err := driver.TKEClient.GetClusterInstances(config.Spec.ClusterID)
-			if err != nil {
-				return config, err
-			}
-
-			for _, instance := range instances {
-				if *instance.InstanceState == tcdriver.InstanceStatusRunning {
-					if err = driver.TKEClient.CreateClusterEndpoints(config.Spec, config.Spec.ClusterEndpoint.Enable); err != nil {
-						return config, err
+			// Clusters with only virtual node pools have no traditional VM instances.
+			// Use NodePoolList (not VirtualNodePoolList) as the guard: Rancher may overwrite
+			// VirtualNodePoolList to nil when syncing, making it unreliable as a condition.
+			// If no regular node pools are configured, create the endpoint without waiting for instances.
+			logrus.Infof("cluster [%s] endpoint not found: nodePools=%d virtualNodePools=%d",
+				config.Name, len(config.Spec.NodePoolList), len(config.Spec.VirtualNodePoolList))
+			if len(config.Spec.NodePoolList) == 0 {
+				logrus.Infof("cluster [%s] no regular node pools, creating endpoint directly", config.Name)
+				if err = driver.TKEClient.CreateClusterEndpoints(config.Spec, config.Spec.ClusterEndpoint.Enable); err != nil {
+					return config, err
+				}
+			} else {
+				instances, err := driver.TKEClient.GetClusterInstances(config.Spec.ClusterID)
+				if err != nil {
+					return config, err
+				}
+				for _, instance := range instances {
+					if *instance.InstanceState == tcdriver.InstanceStatusRunning {
+						if err = driver.TKEClient.CreateClusterEndpoints(config.Spec, config.Spec.ClusterEndpoint.Enable); err != nil {
+							return config, err
+						}
+						break
 					}
-					break
 				}
 			}
 
@@ -700,6 +886,7 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 			OsCustomizeType:    *nodePool.OsCustomizeType,
 			Tags:               utils.ParseTagsString(nodePool.Tags),
 			DeletionProtection: *nodePool.DeletionProtection,
+			UserScript:         utils.StringValue(nodePool.UserScript),
 		})
 	}
 	configSpec.NodePoolList = nodePoolList
@@ -710,6 +897,70 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 func BuildUpstreamClusterState(driver *tcdriver.Driver, cluster *tkeapi.Cluster, nodePools []*tkeapi.NodePool) (*tkev1.TKEClusterConfigSpec, error) {
 	upstreamSpec := &tkev1.TKEClusterConfigSpec{}
 	return FixConfig(driver, upstreamSpec, cluster, nodePools), nil
+}
+
+// BuildUpstreamVirtualNodePoolList fetches virtual node pools from TKE API and converts to
+// VirtualNodePoolDetail using upstream Describe fields (full JSON). SubnetIds, security groups,
+// labels, taints, OS, deletion protection come from the cloud. VirtualNodes are filled via
+// DescribeClusterVirtualNode; on error, preserves VirtualNodes from existing.
+func BuildUpstreamVirtualNodePoolList(driver *tcdriver.Driver, clusterID string, existing []tkev1.VirtualNodePoolDetail) ([]tkev1.VirtualNodePoolDetail, error) {
+	upstream, err := driver.TKEClient.GetClusterVirtualNodePoolsFull(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	return convertUpstreamVirtualNodePoolList(driver, clusterID, upstream, existing), nil
+}
+
+func convertUpstreamVirtualNodePoolList(driver *tcdriver.Driver, clusterID string, upstream []tkeapifull.VirtualNodePool, existing []tkev1.VirtualNodePoolDetail) []tkev1.VirtualNodePoolDetail {
+	if len(upstream) == 0 {
+		return []tkev1.VirtualNodePoolDetail{}
+	}
+
+	existingByID := make(map[string]tkev1.VirtualNodePoolDetail, len(existing))
+	for _, vp := range existing {
+		if vp.NodePoolID != "" {
+			existingByID[vp.NodePoolID] = vp
+		}
+	}
+
+	result := make([]tkev1.VirtualNodePoolDetail, 0, len(upstream))
+	for i := range upstream {
+		vp := &upstream[i]
+		if vp.NodePoolId == "" {
+			continue
+		}
+
+		item := vp.ToDetail()
+
+		// VirtualNodes: DescribeClusterVirtualNode; on error keep prior spec only for this sub-resource.
+		nodes, err := driver.TKEClient.GetClusterVirtualNodes(clusterID, item.NodePoolID)
+		if err != nil {
+			logrus.Warnf("GetClusterVirtualNodes clusterId=%s nodePoolId=%s: %v, using existing VirtualNodes", clusterID, item.NodePoolID, err)
+			if old, ok := existingByID[item.NodePoolID]; ok {
+				item.VirtualNodes = old.VirtualNodes
+			}
+		} else {
+			item.VirtualNodes = toVirtualNodeSpecs(nodes)
+		}
+
+		result = append(result, item)
+	}
+
+	return result
+}
+
+func toVirtualNodeSpecs(nodes []*tkeapi.VirtualNode) []tkev1.VirtualNodeSpec {
+	out := make([]tkev1.VirtualNodeSpec, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		out = append(out, tkev1.VirtualNodeSpec{
+			DisplayName: utils.StringValue(n.Name),
+			SubnetId:    utils.StringValue(n.SubnetId),
+		})
+	}
+	return out
 }
 
 // createCASecret creates a secret containing a CA and endpoint for use in generating a kubeconfig file.
@@ -793,4 +1044,119 @@ func (h *Handler) validate(config *tkev1.TKEClusterConfig) error {
 	}
 
 	return nil
+}
+
+// ensureNodePoolsDeleted ensures all node pools for the cluster are deleted
+func (h *Handler) ensureNodePoolsDeleted(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig) (bool, error) {
+	nodePools, err := driver.TKEClient.GetClusterNodePools(config.Spec.ClusterID)
+	if err != nil {
+		// If cluster not found, it means cluster is already deleted
+		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+			if sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
+				logrus.Infof("cluster [%s] not found, already removed", config.Name)
+				return true, nil
+			}
+		}
+		logrus.Warnf("failed to get node pools for cluster [%s]: %v", config.Name, err)
+		return false, err
+	}
+
+	if len(nodePools) == 0 {
+		return true, nil
+	}
+
+	var needDeletePoolIds []*string
+	for _, np := range nodePools {
+		if np.NodePoolId == nil || *np.NodePoolId == "" {
+			continue
+		}
+		// Only delete node pools that are not being deleted yet
+		if np.LifeState != nil {
+			state := *np.LifeState
+			if state == tcdriver.NodePoolStatusDeleting || state == tcdriver.NodePoolStatusDeleted {
+				// Already being deleted, skip
+				continue
+			}
+		}
+		needDeletePoolIds = append(needDeletePoolIds, np.NodePoolId)
+	}
+
+	// Request deletion for node pools that need it
+	if len(needDeletePoolIds) > 0 {
+		logrus.Infof("requesting deletion of %d node pool(s) for cluster [%s]", len(needDeletePoolIds), config.Name)
+		if err := driver.TKEClient.DeleteNodePool(config.Spec.ClusterID, needDeletePoolIds); err != nil {
+			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+				if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
+					// Already deleted, continue waiting
+					logrus.Infof("node pools already deleted for cluster [%s]", config.Name)
+				} else {
+					logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
+					return false, err
+				}
+			} else {
+				logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
+				return false, err
+			}
+		}
+	}
+
+	// Wait for all node pools to be deleted (regardless of whether we just requested deletion)
+	logrus.Infof("cluster [%s] still has %d node pool(s), waiting for deletion to complete", config.Name, len(nodePools))
+	return false, nil
+}
+
+func (h *Handler) ensureVirtualNodePoolsDeleted(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig) (bool, error) {
+	virtualNodePools, err := driver.TKEClient.GetClusterVirtualNodePoolsFull(config.Spec.ClusterID)
+	if err != nil {
+		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+			if sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
+				logrus.Infof("cluster [%s] not found while querying virtual node pools, already removed", config.Name)
+				return true, nil
+			}
+		}
+		logrus.Warnf("failed to get virtual node pools for cluster [%s]: %v", config.Name, err)
+		return false, err
+	}
+
+	if len(virtualNodePools) == 0 {
+		// nothing to delete, allow cluster deletion to proceed
+		return true, nil
+	}
+
+	var needDeleteVirtualPoolIds []*string
+	for i := range virtualNodePools {
+		vp := &virtualNodePools[i]
+		if vp.NodePoolId == "" {
+			continue
+		}
+		if vp.LifeState != "" {
+			state := vp.LifeState
+			if state == tcdriver.NodePoolStatusDeleting || state == tcdriver.NodePoolStatusDeleted {
+				// already being deleted, skip
+				continue
+			}
+		}
+		poolID := vp.NodePoolId
+		needDeleteVirtualPoolIds = append(needDeleteVirtualPoolIds, &poolID)
+	}
+
+	if len(needDeleteVirtualPoolIds) > 0 {
+		logrus.Infof("requesting deletion of %d virtual node pool(s) for cluster [%s] (force=true, evict pods then delete)", len(needDeleteVirtualPoolIds), config.Name)
+		if err := driver.TKEClient.DeleteClusterVirtualNodePool(config.Spec.ClusterID, needDeleteVirtualPoolIds, true); err != nil {
+			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+				if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
+					logrus.Infof("virtual node pools already deleted for cluster [%s]", config.Name)
+				} else {
+					logrus.Errorf("failed to delete virtual node pools for cluster [%s]: %v", config.Name, err)
+					return false, err
+				}
+			} else {
+				logrus.Errorf("failed to delete virtual node pools for cluster [%s]: %v", config.Name, err)
+				return false, err
+			}
+		}
+	}
+
+	logrus.Infof("cluster [%s] still has %d virtual node pool(s), waiting for deletion to complete", config.Name, len(virtualNodePools))
+	return false, nil
 }

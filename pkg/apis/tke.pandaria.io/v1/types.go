@@ -44,6 +44,7 @@ type TKEClusterConfigSpec struct {
 	ExtensionAddon          []ExtensionAddon         `json:"extensionAddon,omitempty"`
 	RunInstancesForNode     *RunInstancesForNode     `json:"runInstancesForNode,omitempty"`
 	NodePoolList            []NodePoolDetail         `json:"nodePoolList,omitempty"`
+	VirtualNodePoolList     []VirtualNodePoolDetail  `json:"virtualNodePoolList,omitempty"`
 }
 
 type ExtensionAddon struct {
@@ -176,4 +177,38 @@ type RunInstancesForNode struct {
 type DataDisk struct {
 	DiskSize int64  `json:"diskSize,omitempty"`
 	DiskType string `json:"diskType,omitempty"`
+}
+
+type VirtualNodePoolDetail struct {
+	NodePoolID         string             `json:"nodePoolId,omitempty"`
+	Name               string             `json:"name,omitempty"`
+	SecurityGroupIDs   []string           `json:"securityGroupIds,omitempty"`
+	SubnetIDs          []string           `json:"subnetIds,omitempty"`
+	Labels             []VirtualNodeLabel `json:"labels,omitempty"`
+	Taints             []VirtualNodeTaint `json:"taints,omitempty"`
+	VirtualNodes       []VirtualNodeSpec  `json:"virtualNodes,omitempty"`
+	DeletionProtection *bool              `json:"deletionProtection,omitempty"`
+	OS                 string             `json:"os,omitempty"`
+}
+
+type VirtualNodeLabel struct {
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+type VirtualNodeTaint struct {
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect,omitempty"`
+}
+
+type VirtualNodeSpec struct {
+	DisplayName string           `json:"displayName,omitempty"`
+	SubnetId    string           `json:"subnetId,omitempty"`
+	Tags        []VirtualNodeTag `json:"tags,omitempty"`
+}
+
+type VirtualNodeTag struct {
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
 }

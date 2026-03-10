@@ -3,11 +3,15 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	tkev1 "github.com/cnrancher/tke-operator/pkg/apis/tke.pandaria.io/v1"
+	"github.com/cnrancher/tke-operator/pkg/tkeapifull"
 	"github.com/cnrancher/tke-operator/utils"
 	"github.com/sirupsen/logrus"
 	tccommon "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
+	tchttp "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/http"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	cvmapi "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tkeapi "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20180525"
@@ -20,6 +24,7 @@ var (
 
 type TKEClient struct {
 	client *tkeapi.Client
+	common *tccommon.Client // same credential/profile as client; used for CommonRequest full JSON responses
 }
 
 func GetTKEClient(credential *tccommon.Credential, region string) (*TKEClient, error) {
@@ -30,7 +35,8 @@ func GetTKEClient(credential *tccommon.Credential, region string) (*TKEClient, e
 		return nil, err
 	}
 
-	return &TKEClient{client: client}, nil
+	commonClient := tccommon.NewCommonClient(credential, region, cpf)
+	return &TKEClient{client: client, common: commonClient}, nil
 }
 
 func (t TKEClient) GetCluster(clusterId string) (*tkeapi.Cluster, error) {
@@ -556,6 +562,189 @@ func (t TKEClient) CreateClusterEndpoints(spec tkev1.TKEClusterConfigSpec, extra
 		return err
 	}
 
+	return nil
+}
+
+func (t TKEClient) CreateClusterVirtualNodePool(clusterId string, pool tkev1.VirtualNodePoolDetail) (*string, error) {
+	logrus.Infof("client tke action: CreateClusterVirtualNodePool")
+	request := tkeapi.NewCreateClusterVirtualNodePoolRequest()
+	request.ClusterId = &clusterId
+	request.Name = &pool.Name
+	request.SecurityGroupIds = utils.ParseStrings(pool.SecurityGroupIDs)
+
+	if len(pool.SubnetIDs) > 0 {
+		request.SubnetIds = utils.ParseStrings(pool.SubnetIDs)
+	}
+	if len(pool.Labels) > 0 {
+		for _, l := range pool.Labels {
+			lCopy := l
+			request.Labels = append(request.Labels, &tkeapi.Label{
+				Name:  &lCopy.Name,
+				Value: &lCopy.Value,
+			})
+		}
+	}
+	if len(pool.Taints) > 0 {
+		for _, t := range pool.Taints {
+			tCopy := t
+			request.Taints = append(request.Taints, &tkeapi.Taint{
+				Key:    &tCopy.Key,
+				Value:  &tCopy.Value,
+				Effect: &tCopy.Effect,
+			})
+		}
+	}
+	if len(pool.VirtualNodes) > 0 {
+		for i, vn := range pool.VirtualNodes {
+			vnCopy := vn
+			displayName := vnCopy.DisplayName
+			// Tencent Cloud may treat multiple VirtualNodes with the same SubnetId and empty
+			// DisplayName as one node. Assign a unique DisplayName so each entry becomes a node.
+			if displayName == "" {
+				displayName = fmt.Sprintf("node-%d", i)
+			}
+			spec := &tkeapi.VirtualNodeSpec{
+				DisplayName: &displayName,
+				SubnetId:    &vnCopy.SubnetId,
+			}
+			for _, tag := range vnCopy.Tags {
+				tagCopy := tag
+				spec.Tags = append(spec.Tags, &tkeapi.Tag{
+					Key:   &tagCopy.Key,
+					Value: &tagCopy.Value,
+				})
+			}
+			request.VirtualNodes = append(request.VirtualNodes, spec)
+		}
+	}
+	if pool.DeletionProtection != nil {
+		request.DeletionProtection = pool.DeletionProtection
+	}
+	if pool.OS != "" {
+		request.OS = &pool.OS
+	}
+
+	// TODO: remove after debugging
+	logrus.Infof("CreateClusterVirtualNodePool request: %s", request.ToJsonString())
+
+	response, err := t.client.CreateClusterVirtualNodePool(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.Response == nil || response.Response.NodePoolId == nil {
+		return nil, fmt.Errorf("error while getting response")
+	}
+	return response.Response.NodePoolId, nil
+}
+
+// ModifyClusterVirtualNodePool calls the TKE API when fields is non-empty.
+// The bool is true when the API accepted a change that may apply asynchronously; false when
+// there was nothing to send or the cloud reported no effective change ("nothing is updated").
+func (t TKEClient) ModifyClusterVirtualNodePool(clusterId string, nodePoolId string, fields *utils.VirtualNodePoolModifyFields) (appliedChange bool, err error) {
+	if fields == nil || fields.Empty() {
+		return false, nil
+	}
+	logrus.Infof("client tke action: ModifyClusterVirtualNodePool")
+	request := tkeapi.NewModifyClusterVirtualNodePoolRequest()
+	request.ClusterId = &clusterId
+	request.NodePoolId = &nodePoolId
+
+	if fields.SecurityGroupIDs != nil {
+		request.SecurityGroupIds = utils.ParseStrings(*fields.SecurityGroupIDs)
+	}
+	if fields.Labels != nil {
+		for _, l := range *fields.Labels {
+			lCopy := l
+			request.Labels = append(request.Labels, &tkeapi.Label{
+				Name:  &lCopy.Name,
+				Value: &lCopy.Value,
+			})
+		}
+	}
+	if fields.Taints != nil {
+		for _, tnp := range *fields.Taints {
+			tCopy := tnp
+			request.Taints = append(request.Taints, &tkeapi.Taint{
+				Key:    &tCopy.Key,
+				Value:  &tCopy.Value,
+				Effect: &tCopy.Effect,
+			})
+		}
+	}
+	if fields.DeletionProtection != nil {
+		request.DeletionProtection = fields.DeletionProtection
+	}
+
+	if _, err := t.client.ModifyClusterVirtualNodePool(request); err != nil {
+		// Local diff can disagree with the cloud (normalization, read-after-write, or fields the API ignores).
+		// TKE returns InvalidParameter.Param / "nothing is updated" when the payload would not change state.
+		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+			if sdkErr.Code == "InvalidParameter.Param" && strings.Contains(sdkErr.Message, "nothing is updated") {
+				logrus.Infof("ModifyClusterVirtualNodePool nodePoolId=%s: no effective change on cloud, ok", nodePoolId)
+				return false, nil
+			}
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (t TKEClient) GetClusterVirtualNodePools(clusterId string) ([]*tkeapi.VirtualNodePool, error) {
+	logrus.Infof("client tke action: GetClusterVirtualNodePools")
+	request := tkeapi.NewDescribeClusterVirtualNodePoolsRequest()
+	request.ClusterId = &clusterId
+	response, err := t.client.DescribeClusterVirtualNodePools(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.Response == nil {
+		return nil, fmt.Errorf("error while getting response")
+	}
+	return response.Response.NodePoolSet, nil
+}
+
+// GetClusterVirtualNodePoolsFull calls DescribeClusterVirtualNodePools via CommonRequest and parses
+// the full JSON (including SecurityGroupIds, DeletionProtection, OS, etc. missing from generated SDK models).
+func (t TKEClient) GetClusterVirtualNodePoolsFull(clusterId string) ([]tkeapifull.VirtualNodePool, error) {
+	logrus.Infof("client tke action: GetClusterVirtualNodePoolsFull")
+	// 2018-05-25 is api verion, you can find it in tencent API Explorer
+	req := tchttp.NewCommonRequest("tke", "2018-05-25", "DescribeClusterVirtualNodePools")
+	if err := req.SetActionParameters(map[string]interface{}{"ClusterId": clusterId}); err != nil {
+		return nil, err
+	}
+	resp := tchttp.NewCommonResponse()
+	if err := t.common.Send(req, resp); err != nil {
+		return nil, err
+	}
+	raw := resp.GetBody()
+	logrus.Debugf("DescribeClusterVirtualNodePools raw response: %s", string(raw))
+	return tkeapifull.ParseDescribeClusterVirtualNodePoolsResponse(raw)
+}
+
+func (t TKEClient) GetClusterVirtualNodes(clusterId string, nodePoolId string) ([]*tkeapi.VirtualNode, error) {
+	logrus.Infof("client tke action: GetClusterVirtualNodes clusterId=%s nodePoolId=%s", clusterId, nodePoolId)
+	request := tkeapi.NewDescribeClusterVirtualNodeRequest()
+	request.ClusterId = &clusterId
+	request.NodePoolId = &nodePoolId
+	response, err := t.client.DescribeClusterVirtualNode(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.Response == nil {
+		return nil, fmt.Errorf("error while getting response")
+	}
+	return response.Response.Nodes, nil
+}
+
+func (t TKEClient) DeleteClusterVirtualNodePool(clusterId string, nodePoolIds []*string, force bool) error {
+	logrus.Infof("client tke action: DeleteClusterVirtualNodePool")
+	request := tkeapi.NewDeleteClusterVirtualNodePoolRequest()
+	request.ClusterId = &clusterId
+	request.NodePoolIds = nodePoolIds
+	request.Force = &force
+	if _, err := t.client.DeleteClusterVirtualNodePool(request); err != nil {
+		return err
+	}
 	return nil
 }
 
