@@ -124,10 +124,14 @@ func (t TKEClient) CreateClusterNodePool(clusterId string, nodePool tkev1.NodePo
 	request.OsCustomizeType = &nodePool.OsCustomizeType
 	request.Tags = utils.ParseStringTags(nodePool.Tags)
 	request.DeletionProtection = &nodePool.DeletionProtection
-	request.InstanceAdvancedSettings = &tkeapi.InstanceAdvancedSettings{
+	advancedSettings := &tkeapi.InstanceAdvancedSettings{
 		Labels: utils.ParseStringLabels(nodePool.Labels),
 		Taints: utils.ParseStringTaints(nodePool.Taints),
 	}
+	if nodePool.UserScript != "" {
+		advancedSettings.UserScript = &nodePool.UserScript
+	}
+	request.InstanceAdvancedSettings = advancedSettings
 
 	response, err := t.client.CreateClusterNodePool(request)
 	if err != nil {
@@ -198,6 +202,9 @@ func (t TKEClient) ModifyClusterNodePool(clusterId string, nodePool tkev1.NodePo
 	request.OsCustomizeType = &nodePool.OsCustomizeType
 	request.Tags = utils.ParseStringTags(nodePool.Tags)
 	request.DeletionProtection = &nodePool.DeletionProtection
+	if nodePool.UserScript != "" {
+		request.UserScript = &nodePool.UserScript
+	}
 
 	if _, err := t.client.ModifyClusterNodePool(request); err != nil {
 		return err

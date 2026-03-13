@@ -73,6 +73,10 @@ type NodePoolDetail struct {
 	OsCustomizeType      string               `json:"osCustomizeType,omitempty"`
 	Tags                 []string             `json:"tags,omitempty"`
 	DeletionProtection   bool                 `json:"deletionProtection,omitempty"`
+	// UserScript is a base64-encoded script that runs after k8s components are started on each node.
+	// Corresponds to InstanceAdvancedSettings.UserScript in CreateClusterNodePool and
+	// the top-level UserScript field in ModifyClusterNodePool.
+	UserScript string `json:"userScript,omitempty"`
 }
 
 type AutoScalingGroupPara struct {
