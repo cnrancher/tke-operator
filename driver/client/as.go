@@ -13,9 +13,12 @@ type ASClient struct {
 	client *asapi.Client
 }
 
-func GetASClient(credential *tccommon.Credential, region string) (*ASClient, error) {
+func GetASClient(credential *tccommon.Credential, region, language string) (*ASClient, error) {
 	cpf := profile.NewClientProfile()
 	cpf.HttpProfile.Endpoint = "as.tencentcloudapi.com"
+	if language == "zh-CN" || language == "en-US" {
+		cpf.Language = language
+	}
 	client, err := asapi.NewClient(credential, region, cpf)
 	if err != nil {
 		return nil, err

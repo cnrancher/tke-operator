@@ -40,6 +40,10 @@ const (
 	InstanceStatusFailed       = "failed"
 )
 
+// Language for Tencent Cloud API responses (X-TC-Language). Valid: zh-CN, en-US.
+// DefaultLanguage is used when no language is specified so API errors and descriptions are in English.
+const DefaultLanguage = "en-US"
+
 type Driver struct {
 	TKEClient *client.TKEClient
 	CVMClient *client.CVMClient
@@ -48,9 +52,14 @@ type Driver struct {
 	ASClient  *client.ASClient
 }
 
-func GetDriver(secretsCache wranglerv1.SecretCache, tkeCredentialSecret, region string) (*Driver, error) {
+// GetDriver creates a Driver for TKE/CVM/VPC/CBS/AS clients. language controls API response language
+// (e.g. error messages); use "" or DefaultLanguage for English, "zh-CN" for Chinese.
+func GetDriver(secretsCache wranglerv1.SecretCache, tkeCredentialSecret, region, language string) (*Driver, error) {
 	if region == "" {
 		region = "ap-guangzhou"
+	}
+	if language != "zh-CN" && language != "en-US" {
+		language = DefaultLanguage
 	}
 
 	credential, err := GetCredential(secretsCache, tkeCredentialSecret)
@@ -58,27 +67,27 @@ func GetDriver(secretsCache wranglerv1.SecretCache, tkeCredentialSecret, region 
 		return nil, err
 	}
 
-	tkeClient, err := client.GetTKEClient(credential, region)
+	tkeClient, err := client.GetTKEClient(credential, region, language)
 	if err != nil {
 		return nil, err
 	}
 
-	cvmClient, err := client.GetCVMClient(credential, region)
+	cvmClient, err := client.GetCVMClient(credential, region, language)
 	if err != nil {
 		return nil, err
 	}
 
-	vpcClient, err := client.GetVPCClient(credential, region)
+	vpcClient, err := client.GetVPCClient(credential, region, language)
 	if err != nil {
 		return nil, err
 	}
 
-	cbsClient, err := client.GetCBSClient(credential, region)
+	cbsClient, err := client.GetCBSClient(credential, region, language)
 	if err != nil {
 		return nil, err
 	}
 
-	asClient, err := client.GetASClient(credential, region)
+	asClient, err := client.GetASClient(credential, region, language)
 	if err != nil {
 		return nil, err
 	}

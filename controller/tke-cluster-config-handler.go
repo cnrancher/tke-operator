@@ -147,7 +147,7 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 			return true, nil
 		}
 
-		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 		if err != nil {
 			return false, err
 		}
@@ -203,7 +203,7 @@ func (h *Handler) importCluster(config *tkev1.TKEClusterConfig) (*tkev1.TKEClust
 		return config, err
 	}
 
-	driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+	driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 	if err != nil {
 		return config, err
 	}
@@ -255,7 +255,7 @@ func (h *Handler) create(config *tkev1.TKEClusterConfig) (*tkev1.TKEClusterConfi
 	}
 
 	if config.Spec.ClusterID == "" {
-		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 		if err != nil {
 			return config, err
 		}
@@ -321,7 +321,7 @@ func (h *Handler) create(config *tkev1.TKEClusterConfig) (*tkev1.TKEClusterConfi
 func (h *Handler) waitForCreationComplete(config *tkev1.TKEClusterConfig) (*tkev1.TKEClusterConfig, error) {
 	logrus.Infof("handler cluster wait for creat complete...")
 	if config.Spec.ClusterID != "" {
-		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 		if err != nil {
 			return nil, err
 		}
@@ -363,7 +363,7 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 		return config, err
 	}
 
-	driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region)
+	driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 	if err != nil {
 		return nil, err
 	}

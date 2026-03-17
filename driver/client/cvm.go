@@ -15,9 +15,12 @@ type CVMClient struct {
 	client *cvmapi.Client
 }
 
-func GetCVMClient(credential *tccommon.Credential, region string) (*CVMClient, error) {
+func GetCVMClient(credential *tccommon.Credential, region, language string) (*CVMClient, error) {
 	cpf := profile.NewClientProfile()
 	cpf.HttpProfile.Endpoint = "cvm.tencentcloudapi.com"
+	if language == "zh-CN" || language == "en-US" {
+		cpf.Language = language
+	}
 	client, err := cvmapi.NewClient(credential, region, cpf)
 	if err != nil {
 		return nil, err

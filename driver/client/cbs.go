@@ -15,9 +15,12 @@ type CBSClient struct {
 	client *cbsapi.Client
 }
 
-func GetCBSClient(credential *tccommon.Credential, region string) (*CBSClient, error) {
+func GetCBSClient(credential *tccommon.Credential, region, language string) (*CBSClient, error) {
 	cpf := profile.NewClientProfile()
 	cpf.HttpProfile.Endpoint = "cbs.tencentcloudapi.com"
+	if language == "zh-CN" || language == "en-US" {
+		cpf.Language = language
+	}
 	client, err := cbsapi.NewClient(credential, region, cpf)
 	if err != nil {
 		return nil, err

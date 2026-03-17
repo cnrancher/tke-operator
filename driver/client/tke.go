@@ -27,9 +27,12 @@ type TKEClient struct {
 	common *tccommon.Client // same credential/profile as client; used for CommonRequest full JSON responses
 }
 
-func GetTKEClient(credential *tccommon.Credential, region string) (*TKEClient, error) {
+func GetTKEClient(credential *tccommon.Credential, region, language string) (*TKEClient, error) {
 	cpf := profile.NewClientProfile()
 	cpf.HttpProfile.Endpoint = "tke.tencentcloudapi.com"
+	if language == "zh-CN" || language == "en-US" {
+		cpf.Language = language
+	}
 	client, err := tkeapi.NewClient(credential, region, cpf)
 	if err != nil {
 		return nil, err
