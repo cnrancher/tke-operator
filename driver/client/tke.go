@@ -631,8 +631,7 @@ func (t TKEClient) CreateClusterVirtualNodePool(clusterId string, pool tkev1.Vir
 		request.OS = &pool.OS
 	}
 
-	// TODO: remove after debugging
-	logrus.Infof("CreateClusterVirtualNodePool request: %s", request.ToJsonString())
+	logrus.Debugf("CreateClusterVirtualNodePool request: %s", request.ToJsonString())
 
 	response, err := t.client.CreateClusterVirtualNodePool(request)
 	if err != nil {

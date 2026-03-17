@@ -96,6 +96,33 @@ func (c CVMClient) GetZones() (*cvmapi.DescribeZonesResponse, error) {
 	return response, nil
 }
 
+// GetInstanceFamilyForZoneAndInstanceType returns the InstanceFamily (e.g. SA2, S5) for the given
+// zone and instance type. Used to filter disk configs by instance family compatibility.
+// Returns empty string if the instance type is not available in the zone (e.g. sold out).
+func (c CVMClient) GetInstanceFamilyForZoneAndInstanceType(zoneId, instanceType string) (string, error) {
+	zoneFilter := "zone"
+	instanceTypeFilter := "instance-type"
+	request := cvmapi.NewDescribeZoneInstanceConfigInfosRequest()
+	request.Filters = []*cvmapi.Filter{
+		{Name: &zoneFilter, Values: []*string{&zoneId}},
+		{Name: &instanceTypeFilter, Values: []*string{&instanceType}},
+	}
+
+	response, err := c.client.DescribeZoneInstanceConfigInfos(request)
+	if err != nil {
+		return "", err
+	}
+	if response.Response == nil || response.Response.InstanceTypeQuotaSet == nil {
+		return "", nil
+	}
+	for _, item := range response.Response.InstanceTypeQuotaSet {
+		if item.InstanceFamily != nil && *item.InstanceFamily != "" {
+			return *item.InstanceFamily, nil
+		}
+	}
+	return "", nil
+}
+
 func (c CVMClient) GetZoneInstanceConfigInfos() (*cvmapi.DescribeZoneInstanceConfigInfosResponse, error) {
 	logrus.Infof("client cvm action: GetZoneInstanceConfigInfos")
 	request := cvmapi.NewDescribeZoneInstanceConfigInfosRequest()
