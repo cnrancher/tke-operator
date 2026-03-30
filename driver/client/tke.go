@@ -406,11 +406,12 @@ func (t TKEClient) GetVersions() (*tkeapi.DescribeVersionsResponse, error) {
 	return response, nil
 }
 
-func (t TKEClient) GetImages() (*tkeapi.DescribeImagesResponse, error) {
-	logrus.Infof("client tke action: GetImages")
-	request := tkeapi.NewDescribeImagesRequest()
+// GetImages lists TKE node OS images via DescribeOSImages (not DescribeImages, which targets container image instances).
+func (t TKEClient) GetImages() (*tkeapi.DescribeOSImagesResponse, error) {
+	logrus.Infof("client tke action: GetImages (DescribeOSImages)")
+	request := tkeapi.NewDescribeOSImagesRequest()
 
-	response, err := t.client.DescribeImages(request)
+	response, err := t.client.DescribeOSImages(request)
 	if err != nil {
 		return nil, err
 	}
