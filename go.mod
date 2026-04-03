@@ -7,12 +7,12 @@ require (
 	github.com/rancher/lasso v0.2.5
 	github.com/rancher/wrangler/v3 v3.2.3
 	github.com/sirupsen/logrus v1.9.3
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/as v1.0.715
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs v1.0.715
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.715
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.0.715
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.0.715
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.0.715
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/as v1.3.53
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs v1.3.40
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.65
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.63
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.59
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.3.65
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1

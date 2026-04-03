@@ -274,3 +274,116 @@ func ParseToSystemDiskInstance(systemDisk tkev1.DataDisk) *cvmapi.SystemDisk {
 		DiskType: &systemDisk.DiskType,
 	}
 }
+
+// VirtualNodePoolModifyFields holds the subset of VirtualNodePoolDetail that
+// ModifyClusterVirtualNodePool accepts. Each field is a pointer so that nil means
+// “do not send this key” (unchanged in cloud). Slices use pointer-to-slice so an
+// empty slice can mean “clear labels/taints/SGs” when that slice pointer is non-nil.
+type VirtualNodePoolModifyFields struct {
+	SecurityGroupIDs   *[]string
+	Labels             *[]tkev1.VirtualNodeLabel
+	Taints             *[]tkev1.VirtualNodeTaint
+	DeletionProtection *bool
+}
+
+// Empty reports whether there is nothing to send to Modify.
+func (f *VirtualNodePoolModifyFields) Empty() bool {
+	if f == nil {
+		return true
+	}
+	return f.SecurityGroupIDs == nil && f.Labels == nil && f.Taints == nil && f.DeletionProtection == nil
+}
+
+// DiffVirtualNodePoolModifyFields compares desired spec to upstream Describe for the only fields
+// supported by ModifyClusterVirtualNodePool: SecurityGroupIds, Labels, Taints, DeletionProtection.
+// Returns nil when no Modify is needed. If desired.DeletionProtection is nil, deletion
+// protection is not compared (leave cloud as-is).
+func DiffVirtualNodePoolModifyFields(desired, upstream tkev1.VirtualNodePoolDetail) *VirtualNodePoolModifyFields {
+	var f VirtualNodePoolModifyFields
+	if !stringSliceEqualUnordered(desired.SecurityGroupIDs, upstream.SecurityGroupIDs) {
+		v := append([]string(nil), desired.SecurityGroupIDs...)
+		f.SecurityGroupIDs = &v
+	}
+	if !virtualNodeLabelsEqual(desired.Labels, upstream.Labels) {
+		v := append([]tkev1.VirtualNodeLabel(nil), desired.Labels...)
+		f.Labels = &v
+	}
+	if !virtualNodeTaintsEqual(desired.Taints, upstream.Taints) {
+		v := append([]tkev1.VirtualNodeTaint(nil), desired.Taints...)
+		f.Taints = &v
+	}
+	if desired.DeletionProtection != nil {
+		up := false
+		if upstream.DeletionProtection != nil {
+			up = *upstream.DeletionProtection
+		}
+		if *desired.DeletionProtection != up {
+			v := *desired.DeletionProtection
+			f.DeletionProtection = &v
+		}
+	}
+	if f.Empty() {
+		return nil
+	}
+	return &f
+}
+
+func stringSliceEqualUnordered(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aa := append([]string(nil), a...)
+	bb := append([]string(nil), b...)
+	sort.Strings(aa)
+	sort.Strings(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func virtualNodeLabelsEqual(a, b []tkev1.VirtualNodeLabel) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := make([]string, len(a))
+	sb := make([]string, len(b))
+	for i, l := range a {
+		sa[i] = l.Name + "=" + l.Value
+	}
+	for i, l := range b {
+		sb[i] = l.Name + "=" + l.Value
+	}
+	sort.Strings(sa)
+	sort.Strings(sb)
+	for i := range sa {
+		if sa[i] != sb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func virtualNodeTaintsEqual(a, b []tkev1.VirtualNodeTaint) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := make([]string, len(a))
+	sb := make([]string, len(b))
+	for i, t := range a {
+		sa[i] = t.Key + ":" + t.Value + ":" + t.Effect
+	}
+	for i, t := range b {
+		sb[i] = t.Key + ":" + t.Value + ":" + t.Effect
+	}
+	sort.Strings(sa)
+	sort.Strings(sb)
+	for i := range sa {
+		if sa[i] != sb[i] {
+			return false
+		}
+	}
+	return true
+}

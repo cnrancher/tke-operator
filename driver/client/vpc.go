@@ -10,9 +10,12 @@ type VPCClient struct {
 	client *vpcapi.Client
 }
 
-func GetVPCClient(credential *tccommon.Credential, region string) (*VPCClient, error) {
+func GetVPCClient(credential *tccommon.Credential, region, language string) (*VPCClient, error) {
 	cpf := profile.NewClientProfile()
 	cpf.HttpProfile.Endpoint = "vpc.tencentcloudapi.com"
+	if language == "zh-CN" || language == "en-US" {
+		cpf.Language = language
+	}
 	client, err := vpcapi.NewClient(credential, region, cpf)
 	if err != nil {
 		return nil, err
