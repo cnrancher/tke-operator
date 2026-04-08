@@ -21,6 +21,20 @@ func ParseDescribeClusterVirtualNodePoolsResponse(raw []byte) ([]VirtualNodePool
 	return env.Response.NodePoolSet, nil
 }
 
+// ParseCheckClusterCIDRResponse unmarshals the raw JSON from CommonResponse.GetBody()
+// for the CheckClusterCIDR API.
+func ParseCheckClusterCIDRResponse(raw []byte) (*CheckClusterCIDRBody, error) {
+	var env CheckClusterCIDREnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("unmarshal CheckClusterCIDR: %w", err)
+	}
+	if env.Response.Error != nil && env.Response.Error.Code != "" {
+		return nil, fmt.Errorf("api error: code=%s message=%s requestId=%s",
+			env.Response.Error.Code, env.Response.Error.Message, env.Response.RequestId)
+	}
+	return &env.Response, nil
+}
+
 // ToDetail maps Describe JSON fields to VirtualNodePoolDetail for modifiable-field comparison
 // and upstream sync. Does not include VirtualNodes (filled separately via DescribeClusterVirtualNode).
 func (vp *VirtualNodePool) ToDetail() tkev1.VirtualNodePoolDetail {

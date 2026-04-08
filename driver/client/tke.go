@@ -773,3 +773,24 @@ func (t TKEClient) GetClusterLevelAttribute() (*tkeapi.DescribeClusterLevelAttri
 
 	return response, nil
 }
+
+// CheckClusterCIDR checks whether the given CIDR conflicts with the VPC, other clusters in the
+// same VPC, or VPC global routes.
+// Uses CommonRequest because the tencentcloud-sdk-go version bundled here does not include
+// the CheckClusterCIDR method in its generated client.
+func (t TKEClient) CheckClusterCIDR(vpcId, clusterCIDR string) (*tkeapifull.CheckClusterCIDRBody, error) {
+	logrus.Infof("client tke action: CheckClusterCIDR vpcId=%s clusterCIDR=%s", vpcId, clusterCIDR)
+	req := tchttp.NewCommonRequest("tke", "2018-05-25", "CheckClusterCIDR")
+	if err := req.SetActionParameters(map[string]interface{}{
+		"VpcId":       vpcId,
+		"ClusterCIDR": clusterCIDR,
+	}); err != nil {
+		return nil, err
+	}
+	resp := tchttp.NewCommonResponse()
+	if err := t.common.Send(req, resp); err != nil {
+		return nil, err
+	}
+	logrus.Debugf("CheckClusterCIDR raw response: %s", string(resp.GetBody()))
+	return tkeapifull.ParseCheckClusterCIDRResponse(resp.GetBody())
+}
