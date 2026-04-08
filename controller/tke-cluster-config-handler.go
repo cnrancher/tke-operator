@@ -390,6 +390,23 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 		return config, nil
 	}
 
+	// DescribeClusters does not expose "Upgrading"; use DescribeClusterStatus to detect
+	// an in-progress master version upgrade and wait until it finishes.
+	clusterDetailStatus, err := driver.TKEClient.GetClusterStatus(&config.Spec.ClusterID)
+	if err != nil {
+		return nil, err
+	}
+	if clusterDetailStatus.ClusterState != nil && *clusterDetailStatus.ClusterState == tcdriver.ClusterStatusUpgrading {
+		logrus.Infof("waiting for cluster [%s] master upgrade to finish (ClusterState=Upgrading)", config.Name)
+		if config.Status.Phase != tkeConfigUpdatingPhase {
+			config = config.DeepCopy()
+			config.Status.Phase = tkeConfigUpdatingPhase
+			return h.tkeCC.UpdateStatus(config)
+		}
+		h.tkeEnqueueAfter(config.Namespace, config.Name, 30*time.Second)
+		return config, nil
+	}
+
 	for _, nodePool := range nodePools {
 		status := *nodePool.LifeState
 		logrus.Infof("nodePool set state [%s] nodePool name %s", status, *nodePool.Name)
@@ -456,6 +473,22 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 				return config, err
 			}
 			return h.enqueueUpdate(config)
+		}
+	}
+
+	// When master upgrade is confirmed complete (versions match), upgrade node instances to the
+	// same target version before processing any other spec changes. This mirrors the two-phase
+	// upgrade model of TKE: master first, nodes second.
+	// waitOrTriggerNodeUpgrade is a no-op when no version change occurred (CheckInstancesUpgradeAble
+	// returns empty for clusters already at the target version).
+	if config.Spec.ClusterBasicSettings != nil {
+		waiting, err := h.waitOrTriggerNodeUpgrade(driver, config)
+		if err != nil {
+			return config, err
+		}
+		if waiting {
+			h.tkeEnqueueAfter(config.Namespace, config.Name, 30*time.Second)
+			return config, nil
 		}
 	}
 
@@ -1002,6 +1035,51 @@ func (h *Handler) createCASecret(driver *tcdriver.Driver, config *tkev1.TKEClust
 	}
 
 	return err
+}
+
+// waitOrTriggerNodeUpgrade ensures that all cluster nodes are upgraded to match the master version
+// after a Kubernetes version upgrade. It must only be called when the master upgrade has already
+// completed (i.e., upstream ClusterVersion == spec ClusterVersion).
+//
+// Return semantics:
+//   - (true,  nil) – a node upgrade is in progress or was just triggered; caller should re-enqueue.
+//   - (false, nil) – all nodes are already at the target version; caller may proceed.
+//   - (false, err) – an unrecoverable error occurred (e.g. upgrade task failed/timed-out).
+func (h *Handler) waitOrTriggerNodeUpgrade(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig) (bool, error) {
+	clusterId := config.Spec.ClusterID
+
+	// Step 1: Query the progress of any existing node upgrade task.
+	// Only "process" and "pending" mean a task is active — wait. The API returns an error
+	// when no node-upgrade task exists (e.g. "task not found"); the client then returns
+	// empty lifeState, so we fall through. Do not gate on err==nil: errors are non-blocking.
+	lifeState, err := driver.TKEClient.GetUpgradeInstanceProgress(clusterId)
+	logrus.Infof("cluster [%s] node upgrade lifeState=%q err=%v", config.Name, lifeState, err)
+	if lifeState == "process" || lifeState == "pending" {
+		return true, nil
+	}
+
+	// Step 2: Determine which nodes are behind the master version.
+	// Only "major" (in-place major-version upgrade) is used, as Rancher only supports
+	// major Kubernetes version upgrades for TKE clusters.
+	instanceIds, err := driver.TKEClient.CheckInstancesUpgradeAble(clusterId, "major")
+	if err != nil {
+		return false, fmt.Errorf("cluster [%s] failed to check upgradeable instances: %v", config.Name, err)
+	}
+
+	if len(instanceIds) == 0 {
+		// All nodes are already at the target version; nothing to do.
+		logrus.Infof("cluster [%s] all nodes are at the target version, no node upgrade required", config.Name)
+		return false, nil
+	}
+
+	// Step 3: Trigger node upgrade for all eligible instances in a single task.
+	logrus.Infof("cluster [%s] triggering node upgrade (major) for %d instance(s): %v",
+		config.Name, len(instanceIds), instanceIds)
+	if err := driver.TKEClient.UpgradeClusterInstances(clusterId, "major", instanceIds); err != nil {
+		return false, fmt.Errorf("cluster [%s] failed to trigger node upgrade: %v", config.Name, err)
+	}
+
+	return true, nil
 }
 
 // enqueueUpdate enqueues the config if it is already in the updating phase. Otherwise, the

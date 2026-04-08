@@ -15,6 +15,9 @@ const (
 	ClusterStatusCreating = "Creating"
 	ClusterStatusIdling   = "Idling"
 	ClusterStatusAbnormal = "Abnormal"
+	// ClusterStatusUpgrading is only visible via DescribeClusterStatus (not DescribeClusters).
+	// It indicates that the master control-plane is undergoing a Kubernetes version upgrade.
+	ClusterStatusUpgrading = "Upgrading"
 )
 
 // state of node pool
