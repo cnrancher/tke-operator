@@ -450,18 +450,31 @@ func (t TKEClient) UpdateClusterVersion(configSpec *tkev1.TKEClusterConfigSpec) 
 	return response, nil
 }
 
-func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec) (*tkeapi.ModifyClusterAttributeResponse, error) {
+// ModifyClusterAttribute updates mutable cluster attributes.
+// upstreamBasicSettings is used to suppress fields that the TKE API rejects when
+// the value is identical to the current upstream value (e.g. ClusterLevel).
+func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec, upstreamBasicSettings *tkev1.ClusterBasicSettings) (*tkeapi.ModifyClusterAttributeResponse, error) {
 	logrus.Infof("client tke action: ModifyClusterAttribute")
 	request := tkeapi.NewModifyClusterAttributeRequest()
 	request.ClusterId = &configSpec.ClusterID
-	request.ProjectId = &configSpec.ClusterBasicSettings.ProjectID
-	request.ClusterName = &configSpec.ClusterBasicSettings.ClusterName
-	request.ClusterDesc = &configSpec.ClusterBasicSettings.ClusterDescription
-	request.ClusterLevel = &configSpec.ClusterBasicSettings.ClusterLevel
-	request.AutoUpgradeClusterLevel = &tkeapi.AutoUpgradeClusterLevel{
-		IsAutoUpgrade: &configSpec.ClusterBasicSettings.IsAutoUpgrade,
+	if configSpec.ClusterBasicSettings != nil {
+		request.ProjectId = &configSpec.ClusterBasicSettings.ProjectID
+		request.ClusterName = &configSpec.ClusterBasicSettings.ClusterName
+		request.ClusterDesc = &configSpec.ClusterBasicSettings.ClusterDescription
+		// TKE API rejects ClusterLevel / AutoUpgradeClusterLevel when the value is unchanged;
+		// send each field independently only when it actually differs from upstream.
+		if upstreamBasicSettings == nil || configSpec.ClusterBasicSettings.ClusterLevel != upstreamBasicSettings.ClusterLevel {
+			request.ClusterLevel = &configSpec.ClusterBasicSettings.ClusterLevel
+		}
+		if upstreamBasicSettings == nil || configSpec.ClusterBasicSettings.IsAutoUpgrade != upstreamBasicSettings.IsAutoUpgrade {
+			request.AutoUpgradeClusterLevel = &tkeapi.AutoUpgradeClusterLevel{
+				IsAutoUpgrade: &configSpec.ClusterBasicSettings.IsAutoUpgrade,
+			}
+		}
 	}
-	request.QGPUShareEnable = &configSpec.ClusterAdvancedSettings.QGPUShareEnable
+	if configSpec.ClusterAdvancedSettings != nil {
+		request.QGPUShareEnable = &configSpec.ClusterAdvancedSettings.QGPUShareEnable
+	}
 
 	response, err := t.client.ModifyClusterAttribute(request)
 	if err != nil {

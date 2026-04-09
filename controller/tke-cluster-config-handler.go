@@ -492,18 +492,19 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		}
 	}
 
-	if config.Spec.ClusterBasicSettings != nil && config.Spec.ClusterAdvancedSettings != nil {
-		if config.Spec.ClusterBasicSettings.ProjectID != upstreamSpec.ClusterBasicSettings.ProjectID ||
+	basicChanged := config.Spec.ClusterBasicSettings != nil &&
+		(config.Spec.ClusterBasicSettings.ProjectID != upstreamSpec.ClusterBasicSettings.ProjectID ||
 			config.Spec.ClusterBasicSettings.ClusterName != upstreamSpec.ClusterBasicSettings.ClusterName ||
 			config.Spec.ClusterBasicSettings.ClusterDescription != upstreamSpec.ClusterBasicSettings.ClusterDescription ||
 			config.Spec.ClusterBasicSettings.ClusterLevel != upstreamSpec.ClusterBasicSettings.ClusterLevel ||
-			config.Spec.ClusterBasicSettings.IsAutoUpgrade != upstreamSpec.ClusterBasicSettings.IsAutoUpgrade ||
-			config.Spec.ClusterAdvancedSettings.QGPUShareEnable != upstreamSpec.ClusterAdvancedSettings.QGPUShareEnable {
-			if _, err := driver.TKEClient.ModifyClusterAttribute(&config.Spec); err != nil {
-				return config, err
-			}
-			return h.enqueueUpdate(config)
+			config.Spec.ClusterBasicSettings.IsAutoUpgrade != upstreamSpec.ClusterBasicSettings.IsAutoUpgrade)
+	advancedChanged := config.Spec.ClusterAdvancedSettings != nil &&
+		config.Spec.ClusterAdvancedSettings.QGPUShareEnable != upstreamSpec.ClusterAdvancedSettings.QGPUShareEnable
+	if basicChanged || advancedChanged {
+		if _, err := driver.TKEClient.ModifyClusterAttribute(&config.Spec, upstreamSpec.ClusterBasicSettings); err != nil {
+			return config, err
 		}
+		return h.enqueueUpdate(config)
 	}
 
 	logrus.Infof("cluster [%s] updateUpstreamClusterState: nodePools=%d virtualNodePools=%d",
