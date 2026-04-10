@@ -1,5 +1,5 @@
-// Package tkeapifull holds response types for DescribeClusterVirtualNodePools that include
-// fields not present on tencentcloud-sdk-go's generated VirtualNodePool (e.g. SecurityGroupIds).
+// Package tkeapifull holds response types for TKE APIs whose fields are not fully covered
+// by the generated tencentcloud-sdk-go models (e.g. SecurityGroupIds, CheckClusterCIDR).
 package tkeapifull
 
 // DescribeClusterVirtualNodePoolsEnvelope matches the top-level API JSON.
@@ -48,4 +48,18 @@ type Taint struct {
 	Key    string `json:"Key"`
 	Value  string `json:"Value"`
 	Effect string `json:"Effect"`
+}
+
+// CheckClusterCIDREnvelope matches the top-level JSON returned by TKE CheckClusterCIDR.
+type CheckClusterCIDREnvelope struct {
+	Response CheckClusterCIDRBody `json:"Response"`
+}
+
+// CheckClusterCIDRBody is the inner Response object for CheckClusterCIDR.
+type CheckClusterCIDRBody struct {
+	IsConflict   bool              `json:"IsConflict"`
+	ConflictType string            `json:"ConflictType"`
+	ConflictMsg  string            `json:"ConflictMsg"`
+	RequestId    string            `json:"RequestId"`
+	Error        *DescribeAPIError `json:"Error,omitempty"`
 }

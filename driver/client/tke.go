@@ -450,18 +450,31 @@ func (t TKEClient) UpdateClusterVersion(configSpec *tkev1.TKEClusterConfigSpec) 
 	return response, nil
 }
 
-func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec) (*tkeapi.ModifyClusterAttributeResponse, error) {
+// ModifyClusterAttribute updates mutable cluster attributes.
+// upstreamBasicSettings is used to suppress fields that the TKE API rejects when
+// the value is identical to the current upstream value (e.g. ClusterLevel).
+func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec, upstreamBasicSettings *tkev1.ClusterBasicSettings) (*tkeapi.ModifyClusterAttributeResponse, error) {
 	logrus.Infof("client tke action: ModifyClusterAttribute")
 	request := tkeapi.NewModifyClusterAttributeRequest()
 	request.ClusterId = &configSpec.ClusterID
-	request.ProjectId = &configSpec.ClusterBasicSettings.ProjectID
-	request.ClusterName = &configSpec.ClusterBasicSettings.ClusterName
-	request.ClusterDesc = &configSpec.ClusterBasicSettings.ClusterDescription
-	request.ClusterLevel = &configSpec.ClusterBasicSettings.ClusterLevel
-	request.AutoUpgradeClusterLevel = &tkeapi.AutoUpgradeClusterLevel{
-		IsAutoUpgrade: &configSpec.ClusterBasicSettings.IsAutoUpgrade,
+	if configSpec.ClusterBasicSettings != nil {
+		request.ProjectId = &configSpec.ClusterBasicSettings.ProjectID
+		request.ClusterName = &configSpec.ClusterBasicSettings.ClusterName
+		request.ClusterDesc = &configSpec.ClusterBasicSettings.ClusterDescription
+		// TKE API rejects ClusterLevel / AutoUpgradeClusterLevel when the value is unchanged;
+		// send each field independently only when it actually differs from upstream.
+		if upstreamBasicSettings == nil || configSpec.ClusterBasicSettings.ClusterLevel != upstreamBasicSettings.ClusterLevel {
+			request.ClusterLevel = &configSpec.ClusterBasicSettings.ClusterLevel
+		}
+		if upstreamBasicSettings == nil || configSpec.ClusterBasicSettings.IsAutoUpgrade != upstreamBasicSettings.IsAutoUpgrade {
+			request.AutoUpgradeClusterLevel = &tkeapi.AutoUpgradeClusterLevel{
+				IsAutoUpgrade: &configSpec.ClusterBasicSettings.IsAutoUpgrade,
+			}
+		}
 	}
-	request.QGPUShareEnable = &configSpec.ClusterAdvancedSettings.QGPUShareEnable
+	if configSpec.ClusterAdvancedSettings != nil {
+		request.QGPUShareEnable = &configSpec.ClusterAdvancedSettings.QGPUShareEnable
+	}
 
 	response, err := t.client.ModifyClusterAttribute(request)
 	if err != nil {
@@ -772,4 +785,93 @@ func (t TKEClient) GetClusterLevelAttribute() (*tkeapi.DescribeClusterLevelAttri
 	}
 
 	return response, nil
+}
+
+// CheckInstancesUpgradeAble returns the instance IDs of cluster nodes that can be upgraded
+// to match the current master version using the given upgradeType.
+// upgradeType: "major" for in-place major-version upgrade, "hot" for minor-version hot upgrade.
+// Returns an empty slice when all nodes are already at the target version.
+func (t TKEClient) CheckInstancesUpgradeAble(clusterId, upgradeType string) ([]string, error) {
+	logrus.Infof("client tke action: CheckInstancesUpgradeAble clusterId=%s upgradeType=%s", clusterId, upgradeType)
+	request := tkeapi.NewCheckInstancesUpgradeAbleRequest()
+	request.ClusterId = &clusterId
+	request.UpgradeType = &upgradeType
+
+	response, err := t.client.CheckInstancesUpgradeAble(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.Response == nil {
+		return nil, fmt.Errorf("error while getting response from CheckInstancesUpgradeAble")
+	}
+
+	var instanceIds []string
+	for _, inst := range response.Response.UpgradeAbleInstances {
+		if inst != nil && inst.InstanceId != nil {
+			instanceIds = append(instanceIds, *inst.InstanceId)
+		}
+	}
+	return instanceIds, nil
+}
+
+// UpgradeClusterInstances starts a node version upgrade task for the given instances.
+// upgradeType: "major" for in-place major-version upgrade, "hot" for minor-version hot upgrade.
+// Operation is always "create" to initiate a new upgrade task.
+func (t TKEClient) UpgradeClusterInstances(clusterId, upgradeType string, instanceIds []string) error {
+	logrus.Infof("client tke action: UpgradeClusterInstances clusterId=%s upgradeType=%s instances=%v",
+		clusterId, upgradeType, instanceIds)
+	request := tkeapi.NewUpgradeClusterInstancesRequest()
+	op := "create"
+	request.Operation = &op
+	request.ClusterId = &clusterId
+	request.UpgradeType = &upgradeType
+	request.InstanceIds = utils.ParseStrings(instanceIds)
+
+	response, err := t.client.UpgradeClusterInstances(request)
+	if err != nil {
+		return err
+	}
+	if response.Response == nil {
+		return fmt.Errorf("error while getting response from UpgradeClusterInstances")
+	}
+	return nil
+}
+
+// GetUpgradeInstanceProgress returns the lifeState of the latest node upgrade task for the cluster.
+// Possible lifeState values: "pending", "process", "paused", "pauing", "done", "timeout", "aborted".
+// Returns ("", err) when the API call fails (e.g., no upgrade task has ever been created).
+func (t TKEClient) GetUpgradeInstanceProgress(clusterId string) (string, error) {
+	logrus.Infof("client tke action: GetUpgradeInstanceProgress clusterId=%s", clusterId)
+	request := tkeapi.NewGetUpgradeInstanceProgressRequest()
+	request.ClusterId = &clusterId
+
+	response, err := t.client.GetUpgradeInstanceProgress(request)
+	if err != nil {
+		return "", err
+	}
+	if response.Response == nil || response.Response.LifeState == nil {
+		return "", fmt.Errorf("error while getting response from GetUpgradeInstanceProgress")
+	}
+	return *response.Response.LifeState, nil
+}
+
+// CheckClusterCIDR checks whether the given CIDR conflicts with the VPC, other clusters in the
+// same VPC, or VPC global routes.
+// Uses CommonRequest because the tencentcloud-sdk-go version bundled here does not include
+// the CheckClusterCIDR method in its generated client.
+func (t TKEClient) CheckClusterCIDR(vpcId, clusterCIDR string) (*tkeapifull.CheckClusterCIDRBody, error) {
+	logrus.Infof("client tke action: CheckClusterCIDR vpcId=%s clusterCIDR=%s", vpcId, clusterCIDR)
+	req := tchttp.NewCommonRequest("tke", "2018-05-25", "CheckClusterCIDR")
+	if err := req.SetActionParameters(map[string]interface{}{
+		"VpcId":       vpcId,
+		"ClusterCIDR": clusterCIDR,
+	}); err != nil {
+		return nil, err
+	}
+	resp := tchttp.NewCommonResponse()
+	if err := t.common.Send(req, resp); err != nil {
+		return nil, err
+	}
+	logrus.Debugf("CheckClusterCIDR raw response: %s", string(resp.GetBody()))
+	return tkeapifull.ParseCheckClusterCIDRResponse(resp.GetBody())
 }
