@@ -51,8 +51,12 @@ func (t TKEClient) GetCluster(clusterId string) (*tkeapi.Cluster, error) {
 		return nil, err
 	}
 
+	// DescribeClusters does not return FAILEDOPERATION_CLUSTERNOTFOUND when querying a
+	// deleted cluster; it either returns nil Response or an empty Clusters list. Normalize
+	// both cases to FAILEDOPERATION_CLUSTERNOTFOUND so all existing callers that already
+	// check for that code work correctly without any extra changes.
 	if response.Response == nil || len(response.Response.Clusters) == 0 {
-		return nil, fmt.Errorf("error while getting response")
+		return nil, tcerrors.NewTencentCloudSDKError(tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND, "cluster not found", "")
 	}
 
 	return response.Response.Clusters[0], nil

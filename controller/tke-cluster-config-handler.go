@@ -34,6 +34,11 @@ const (
 	tkeConfigImportingPhase  = "importing"
 	waitSecond               = 30
 	TKEClusterConfigKind     = "TKEClusterConfig"
+
+	// errCodeVirtualNodePoolInDeletionProtection is the TKE API error code returned when a
+	// virtual node pool has deletion protection enabled. The upstream SDK (v1.3.59) does not
+	// yet define this constant, so we keep it locally until the SDK is bumped.
+	errCodeVirtualNodePoolInDeletionProtection = "OperationDenied.InDeletionProtection"
 )
 
 var backoff = wait.Backoff{
@@ -141,12 +146,43 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 		return config, nil
 	}
 
-	if err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-		if config.Spec.ClusterID == "" {
-			logrus.Infof("cluster [%s] has no ClusterID, already deleted", config.Name)
-			return true, nil
-		}
+	if config.Spec.ClusterID == "" {
+		logrus.Infof("cluster [%s] has no ClusterID, already deleted", config.Name)
+		return config, nil
+	}
 
+	driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
+	if err != nil {
+		return config, err
+	}
+
+	// Fast-path: if the TKE cluster is already gone, skip all node-pool queries and deletion
+	// calls — there is nothing left to clean up on the cloud side.
+	cluster, err := driver.TKEClient.GetCluster(config.Spec.ClusterID)
+	if err != nil {
+		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok && sdkErr.Code == tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND {
+			logrus.Infof("cluster [%s] no longer exists on TKE, skipping deletion steps", config.Name)
+			h.recordRemoveError(config, "")
+			return config, nil
+		}
+		return config, err
+	}
+
+	// Check deletion protection before attempting any deletion.
+	// If the cluster or any node pool has deletion protection enabled, surface a clear error
+	// so the user knows they must disable protection first. This also avoids unnecessary
+	// cloud API calls and prevents the cluster from being stuck in a silent retry loop.
+	// cluster is passed in to avoid a redundant GetCluster call (already fetched above).
+	if protectionErr := h.checkDeletionProtection(driver, config, cluster); protectionErr != nil {
+		logrus.Errorf("cluster [%s] deletion blocked by deletion protection: %v", config.Name, protectionErr)
+		h.recordRemoveError(config, protectionErr.Error())
+		return config, protectionErr
+	}
+
+	// Protection is not enabled; clear any stale failure message from a previous blocked attempt.
+	h.recordRemoveError(config, "")
+
+	if err := wait.ExponentialBackoff(backoff, func() (bool, error) {
 		driver, err := tcdriver.GetDriver(h.secretsCache, config.Spec.TKECredentialSecret, config.Spec.Region, tcdriver.DefaultLanguage)
 		if err != nil {
 			return false, err
@@ -172,7 +208,7 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 			return false, nil
 		}
 
-		// All virtual node pools deleted, now delete the cluster
+		// All node pools deleted, now delete the cluster
 		logrus.Infof("removing cluster %v, region %v", config.Name, config.Spec.Region)
 		if err := driver.TKEClient.DeleteCluster(config.Spec.ClusterID); err != nil {
 			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
@@ -180,8 +216,10 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 					logrus.Infof("cluster %v, region %v already removed", config.Name, config.Spec.Region)
 					return true, nil
 				}
+				if sdkErr.Code == tkeapi.OPERATIONDENIED_CLUSTERINDELETIONPROTECTION {
+					return false, fmt.Errorf("cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", config.Spec.ClusterID)
+				}
 			}
-			// Any other error should be reported
 			logrus.Errorf("failed to delete cluster [%v]: %v", config.Name, err)
 			return false, err
 		}
@@ -193,6 +231,58 @@ func (h *Handler) OnTkeConfigRemoved(key string, config *tkev1.TKEClusterConfig)
 	}
 
 	return config, nil
+}
+
+// recordRemoveError writes the given message to status.FailureMessage so that deletion errors
+// are visible in the UI. Unlike recordError (which wraps OnTkeConfigChanged), OnTkeConfigRemoved
+// is not wrapped, so this helper must be called explicitly.
+func (h *Handler) recordRemoveError(config *tkev1.TKEClusterConfig, message string) {
+	if config.Status.FailureMessage == message {
+		return
+	}
+	configCopy := config.DeepCopy()
+	configCopy.Status.FailureMessage = message
+	if _, err := h.tkeCC.UpdateStatus(configCopy); err != nil {
+		logrus.Errorf("error recording tkecc [%s] remove failure message: %s", config.Name, err.Error())
+	}
+}
+
+// checkDeletionProtection checks whether deletion protection is enabled on the TKE cluster,
+// any regular node pool, or any virtual node pool. cluster is passed in by the caller (already
+// fetched) to avoid a redundant API call. Returns an error describing which resource is
+// protected; returns nil if it is safe to proceed with deletion.
+func (h *Handler) checkDeletionProtection(driver *tcdriver.Driver, config *tkev1.TKEClusterConfig, cluster *tkeapi.Cluster) error {
+	if cluster.DeletionProtection != nil && *cluster.DeletionProtection {
+		return fmt.Errorf("cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", config.Spec.ClusterID)
+	}
+
+	nodePools, err := driver.TKEClient.GetClusterNodePools(config.Spec.ClusterID)
+	if err != nil {
+		return err
+	}
+
+	for _, np := range nodePools {
+		if np.DeletionProtection != nil && *np.DeletionProtection {
+			name := ""
+			if np.Name != nil {
+				name = *np.Name
+			}
+			return fmt.Errorf("node pool [%s] in cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", name, config.Spec.ClusterID)
+		}
+	}
+
+	virtualPools, err := driver.TKEClient.GetClusterVirtualNodePoolsFull(config.Spec.ClusterID)
+	if err != nil {
+		return err
+	}
+
+	for _, vp := range virtualPools {
+		if vp.DeletionProtection {
+			return fmt.Errorf("virtual node pool [%s] in cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", vp.Name, config.Spec.ClusterID)
+		}
+	}
+
+	return nil
 }
 
 // importCluster returns an active cluster spec containing the given config's clusterName and region/zone
@@ -659,7 +749,13 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		}
 	}
 	if len(deleteVirtualNodePoolIds) > 0 {
+		// Always use force=true so running pods are evicted. Deletion protection must be
+		// disabled beforehand (checkDeletionProtection blocks if any pool is still protected).
 		if err := driver.TKEClient.DeleteClusterVirtualNodePool(config.Spec.ClusterID, deleteVirtualNodePoolIds, true); err != nil {
+			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok &&
+				sdkErr.Code == errCodeVirtualNodePoolInDeletionProtection {
+				return config, fmt.Errorf("virtual node pool in cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", config.Spec.ClusterID)
+			}
 			logrus.Errorf("cluster [%s] failed to delete virtual node pool(s): %v", config.Name, err)
 			return config, err
 		}
@@ -1168,6 +1264,8 @@ func (h *Handler) ensureNodePoolsDeleted(driver *tcdriver.Driver, config *tkev1.
 				if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
 					// Already deleted, continue waiting
 					logrus.Infof("node pools already deleted for cluster [%s]", config.Name)
+				} else if sdkErr.Code == tkeapi.FAILEDOPERATION_CVMDELETIONPROTECTION {
+					return false, fmt.Errorf("one or more node pools in cluster [%s] have deletion protection enabled, please disable it in tencent console before deleting", config.Name)
 				} else {
 					logrus.Errorf("failed to delete node pools for cluster [%s]: %v", config.Name, err)
 					return false, err
@@ -1220,12 +1318,18 @@ func (h *Handler) ensureVirtualNodePoolsDeleted(driver *tcdriver.Driver, config 
 	}
 
 	if len(needDeleteVirtualPoolIds) > 0 {
-		logrus.Infof("requesting deletion of %d virtual node pool(s) for cluster [%s] (force=true, evict pods then delete)", len(needDeleteVirtualPoolIds), config.Name)
+		logrus.Infof("requesting deletion of %d virtual node pool(s) for cluster [%s]", len(needDeleteVirtualPoolIds), config.Name)
+		// Always use force=true: deletion protection is already verified clean by
+		// checkDeletionProtection; force evicts any running pods on virtual nodes.
 		if err := driver.TKEClient.DeleteClusterVirtualNodePool(config.Spec.ClusterID, needDeleteVirtualPoolIds, true); err != nil {
 			if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
-				if sdkErr.Code == "ResourceNotFound.NodePoolNotFound" {
+				switch sdkErr.Code {
+				case "ResourceNotFound.NodePoolNotFound":
 					logrus.Infof("virtual node pools already deleted for cluster [%s]", config.Name)
-				} else {
+				case errCodeVirtualNodePoolInDeletionProtection:
+					// Protection re-enabled after our pre-check (race) — surface a clear message.
+					return false, fmt.Errorf("virtual node pool in cluster [%s] has deletion protection enabled, please disable it in tencent console before deleting", config.Spec.ClusterID)
+				default:
 					logrus.Errorf("failed to delete virtual node pools for cluster [%s]: %v", config.Name, err)
 					return false, err
 				}
