@@ -46,6 +46,16 @@ var backoff = wait.Backoff{
 	Steps:    12,
 }
 
+func normalizeUserScript(script string) string {
+	if script == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(script); err == nil {
+		return script
+	}
+	return base64.StdEncoding.EncodeToString([]byte(script))
+}
+
 type Handler struct {
 	tkeCC           v12.TKEClusterConfigClient
 	tkeCache        v12.TKEClusterConfigCache
@@ -1016,7 +1026,7 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 			OsCustomizeType:    *nodePool.OsCustomizeType,
 			Tags:               utils.ParseTagsString(nodePool.Tags),
 			DeletionProtection: *nodePool.DeletionProtection,
-			UserScript:         utils.StringValue(nodePool.UserScript),
+			UserScript:         normalizeUserScript(utils.StringValue(nodePool.UserScript)),
 		})
 	}
 	configSpec.NodePoolList = nodePoolList

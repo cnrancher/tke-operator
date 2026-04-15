@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -21,6 +22,16 @@ var (
 	InstanceDeleteMode = "terminate"
 	KeepInstance       = false
 )
+
+func normalizeUserScript(script string) string {
+	if script == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(script); err == nil {
+		return script
+	}
+	return base64.StdEncoding.EncodeToString([]byte(script))
+}
 
 type TKEClient struct {
 	client *tkeapi.Client
@@ -136,7 +147,8 @@ func (t TKEClient) CreateClusterNodePool(clusterId string, nodePool tkev1.NodePo
 		Taints: utils.ParseStringTaints(nodePool.Taints),
 	}
 	if nodePool.UserScript != "" {
-		advancedSettings.UserScript = &nodePool.UserScript
+		normalized := normalizeUserScript(nodePool.UserScript)
+		advancedSettings.UserScript = &normalized
 	}
 	request.InstanceAdvancedSettings = advancedSettings
 
@@ -210,7 +222,8 @@ func (t TKEClient) ModifyClusterNodePool(clusterId string, nodePool tkev1.NodePo
 	request.Tags = utils.ParseStringTags(nodePool.Tags)
 	request.DeletionProtection = &nodePool.DeletionProtection
 	if nodePool.UserScript != "" {
-		request.UserScript = &nodePool.UserScript
+		normalized := normalizeUserScript(nodePool.UserScript)
+		request.UserScript = &normalized
 	}
 
 	if _, err := t.client.ModifyClusterNodePool(request); err != nil {
