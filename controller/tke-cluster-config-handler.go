@@ -607,6 +607,24 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		return h.enqueueUpdate(config)
 	}
 
+	if config.Spec.ClusterAdvancedSettings != nil && upstreamSpec.ClusterAdvancedSettings != nil &&
+		config.Spec.ClusterAdvancedSettings.DeletionProtection != upstreamSpec.ClusterAdvancedSettings.DeletionProtection {
+		logrus.Infof("cluster [%s] deletion protection change detected: %v -> %v",
+			config.Name,
+			upstreamSpec.ClusterAdvancedSettings.DeletionProtection,
+			config.Spec.ClusterAdvancedSettings.DeletionProtection)
+		if config.Spec.ClusterAdvancedSettings.DeletionProtection {
+			if err := driver.TKEClient.EnableClusterDeletionProtection(config.Spec.ClusterID); err != nil {
+				return config, err
+			}
+		} else {
+			if err := driver.TKEClient.DisableClusterDeletionProtection(config.Spec.ClusterID); err != nil {
+				return config, err
+			}
+		}
+		return h.enqueueUpdate(config)
+	}
+
 	logrus.Infof("cluster [%s] updateUpstreamClusterState: nodePools=%d virtualNodePools=%d",
 		config.Name, len(config.Spec.NodePoolList), len(config.Spec.VirtualNodePoolList))
 
@@ -975,10 +993,11 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 	}
 
 	configSpec.ClusterAdvancedSettings = &tkev1.ClusterAdvancedSettings{
-		IPVS:             *cluster.ClusterNetworkSettings.Ipvs,
-		ContainerRuntime: *cluster.ContainerRuntime,
-		RuntimeVersion:   *cluster.RuntimeVersion,
-		QGPUShareEnable:  *cluster.QGPUShareEnable,
+		IPVS:               *cluster.ClusterNetworkSettings.Ipvs,
+		ContainerRuntime:   *cluster.ContainerRuntime,
+		RuntimeVersion:     *cluster.RuntimeVersion,
+		QGPUShareEnable:    *cluster.QGPUShareEnable,
+		DeletionProtection: cluster.DeletionProtection != nil && *cluster.DeletionProtection,
 	}
 
 	var nodePoolList []tkev1.NodePoolDetail

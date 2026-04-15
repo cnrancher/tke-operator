@@ -505,6 +505,28 @@ func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec
 	return response, nil
 }
 
+// EnableClusterDeletionProtection enables deletion protection for the given cluster.
+func (t TKEClient) EnableClusterDeletionProtection(clusterID string) error {
+	logrus.Infof("client tke action: EnableClusterDeletionProtection")
+	request := tkeapi.NewEnableClusterDeletionProtectionRequest()
+	request.ClusterId = &clusterID
+	if _, err := t.client.EnableClusterDeletionProtection(request); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DisableClusterDeletionProtection disables deletion protection for the given cluster.
+func (t TKEClient) DisableClusterDeletionProtection(clusterID string) error {
+	logrus.Infof("client tke action: DisableClusterDeletionProtection")
+	request := tkeapi.NewDisableClusterDeletionProtectionRequest()
+	request.ClusterId = &clusterID
+	if _, err := t.client.DisableClusterDeletionProtection(request); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (t TKEClient) GetClusterInstances(clusterId string) ([]*tkeapi.Instance, error) {
 	logrus.Infof("client tke action: GetClusterInstances")
 	request := tkeapi.NewDescribeClusterInstancesRequest()
