@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	tcdriver "github.com/cnrancher/tke-operator/driver"
@@ -966,7 +968,57 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 	return config, nil
 }
 
-// FixConfig fix fields for clusters
+// syncClusterEndpointFromDescribeEndpoints merges DescribeClusterEndpoints into clusterEndpoint
+func syncClusterEndpointFromDescribeEndpoints(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, clusterID string) {
+	if clusterID == "" {
+		return
+	}
+	endpoints, err := driver.TKEClient.GetClusterEndpoints(clusterID)
+	if err != nil {
+		logrus.Warnf("syncClusterEndpointFromDescribeEndpoints: failed to get cluster endpoints for [%s]: %v", clusterID, err)
+		return
+	}
+	if endpoints == nil || endpoints.Response == nil {
+		return
+	}
+	resp := endpoints.Response
+	ep := configSpec.ClusterEndpoint
+	if ep == nil {
+		ep = &tkev1.ClusterEndpoint{}
+	}
+	if resp.SecurityGroup != nil && *resp.SecurityGroup != "" {
+		ep.SecurityGroup = *resp.SecurityGroup
+	}
+	if resp.ClusterIntranetSubnetId != nil && *resp.ClusterIntranetSubnetId != "" {
+		ep.SubnetID = *resp.ClusterIntranetSubnetId
+	}
+	ep.Enable = resp.ClusterExternalEndpoint != nil && *resp.ClusterExternalEndpoint != ""
+	configSpec.ClusterEndpoint = ep
+}
+
+// clusterPropertyFields: DescribeClusters Cluster.Property JSON (Tencent; partial decode).
+type clusterPropertyFields struct {
+	NetworkType string `json:"NetworkType"`
+}
+
+// parseNetworkTypeFromProperty reads NetworkType from Cluster.Property when present.
+func parseNetworkTypeFromProperty(property *string) string {
+	if property == nil {
+		return ""
+	}
+	s := strings.TrimSpace(*property)
+	if s == "" {
+		return ""
+	}
+	var p clusterPropertyFields
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		logrus.Debugf("parseNetworkTypeFromProperty: %v", err)
+		return ""
+	}
+	return strings.TrimSpace(p.NetworkType)
+}
+
+// FixConfig aligns configSpec with the DescribeCluster cluster object and node pools.
 func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, cluster *tkeapi.Cluster, nodePools []*tkeapi.NodePool) *tkev1.TKEClusterConfigSpec {
 	configSpec.ClusterBasicSettings = &tkev1.ClusterBasicSettings{
 		ClusterType:        *cluster.ClusterType,
@@ -990,6 +1042,7 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 		EniSubnetIDs:              utils.ParseStringsPointer(cluster.ClusterNetworkSettings.Subnets),
 		IgnoreServiceCIDRConflict: *cluster.ClusterNetworkSettings.IgnoreServiceCIDRConflict,
 		OsCustomizeType:           *cluster.OsCustomizeType,
+		SubnetID:                  utils.StringValue(cluster.ClusterNetworkSettings.SubnetId),
 	}
 
 	configSpec.ClusterAdvancedSettings = &tkev1.ClusterAdvancedSettings{
@@ -998,6 +1051,10 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 		RuntimeVersion:     *cluster.RuntimeVersion,
 		QGPUShareEnable:    *cluster.QGPUShareEnable,
 		DeletionProtection: cluster.DeletionProtection != nil && *cluster.DeletionProtection,
+		KubeProxyMode:      utils.StringValue(cluster.ClusterNetworkSettings.KubeProxyMode),
+		IsDualStack:        cluster.ClusterNetworkSettings.IsDualStack != nil && *cluster.ClusterNetworkSettings.IsDualStack,
+		CiliumMode:         utils.StringValue(cluster.ClusterNetworkSettings.CiliumMode),
+		NetworkType:        parseNetworkTypeFromProperty(cluster.Property),
 	}
 
 	var nodePoolList []tkev1.NodePoolDetail
@@ -1049,6 +1106,8 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 		})
 	}
 	configSpec.NodePoolList = nodePoolList
+
+	syncClusterEndpointFromDescribeEndpoints(driver, configSpec, *cluster.ClusterId)
 
 	return configSpec
 }
