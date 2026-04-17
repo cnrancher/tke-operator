@@ -554,7 +554,7 @@ func (h *Handler) checkAndUpdate(config *tkev1.TKEClusterConfig) (*tkev1.TKEClus
 		}
 	}
 
-	upstreamSpec, err := BuildUpstreamClusterState(driver, cluster, nodePools)
+	upstreamSpec, err := BuildUpstreamClusterState(driver, &config.Spec, cluster, nodePools)
 	if err != nil {
 		return config, err
 	}
@@ -1112,9 +1112,13 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 	return configSpec
 }
 
-func BuildUpstreamClusterState(driver *tcdriver.Driver, cluster *tkeapi.Cluster, nodePools []*tkeapi.NodePool) (*tkev1.TKEClusterConfigSpec, error) {
-	upstreamSpec := &tkev1.TKEClusterConfigSpec{}
-	return FixConfig(driver, upstreamSpec, cluster, nodePools), nil
+// BuildUpstreamClusterState builds the upstream cluster state by using existingSpec as the base
+// so that fields the TKE API does not return (e.g. ExtensiveParameters, RunInstancesForNode,
+// ExtensionAddon) are naturally preserved. Fields that can be fetched from the API are
+// overwritten by FixConfig.
+func BuildUpstreamClusterState(driver *tcdriver.Driver, existingSpec *tkev1.TKEClusterConfigSpec, cluster *tkeapi.Cluster, nodePools []*tkeapi.NodePool) (*tkev1.TKEClusterConfigSpec, error) {
+	base := existingSpec.DeepCopy()
+	return FixConfig(driver, base, cluster, nodePools), nil
 }
 
 // BuildUpstreamVirtualNodePoolList fetches virtual node pools from TKE API and converts to
