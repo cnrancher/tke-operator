@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -21,6 +22,16 @@ var (
 	InstanceDeleteMode = "terminate"
 	KeepInstance       = false
 )
+
+func normalizeUserScript(script string) string {
+	if script == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(script); err == nil {
+		return script
+	}
+	return base64.StdEncoding.EncodeToString([]byte(script))
+}
 
 type TKEClient struct {
 	client *tkeapi.Client
@@ -51,8 +62,12 @@ func (t TKEClient) GetCluster(clusterId string) (*tkeapi.Cluster, error) {
 		return nil, err
 	}
 
+	// DescribeClusters does not return FAILEDOPERATION_CLUSTERNOTFOUND when querying a
+	// deleted cluster; it either returns nil Response or an empty Clusters list. Normalize
+	// both cases to FAILEDOPERATION_CLUSTERNOTFOUND so all existing callers that already
+	// check for that code work correctly without any extra changes.
 	if response.Response == nil || len(response.Response.Clusters) == 0 {
-		return nil, fmt.Errorf("error while getting response")
+		return nil, tcerrors.NewTencentCloudSDKError(tkeapi.FAILEDOPERATION_CLUSTERNOTFOUND, "cluster not found", "")
 	}
 
 	return response.Response.Clusters[0], nil
@@ -132,7 +147,8 @@ func (t TKEClient) CreateClusterNodePool(clusterId string, nodePool tkev1.NodePo
 		Taints: utils.ParseStringTaints(nodePool.Taints),
 	}
 	if nodePool.UserScript != "" {
-		advancedSettings.UserScript = &nodePool.UserScript
+		normalized := normalizeUserScript(nodePool.UserScript)
+		advancedSettings.UserScript = &normalized
 	}
 	request.InstanceAdvancedSettings = advancedSettings
 
@@ -206,7 +222,8 @@ func (t TKEClient) ModifyClusterNodePool(clusterId string, nodePool tkev1.NodePo
 	request.Tags = utils.ParseStringTags(nodePool.Tags)
 	request.DeletionProtection = &nodePool.DeletionProtection
 	if nodePool.UserScript != "" {
-		request.UserScript = &nodePool.UserScript
+		normalized := normalizeUserScript(nodePool.UserScript)
+		request.UserScript = &normalized
 	}
 
 	if _, err := t.client.ModifyClusterNodePool(request); err != nil {
@@ -486,6 +503,28 @@ func (t TKEClient) ModifyClusterAttribute(configSpec *tkev1.TKEClusterConfigSpec
 	}
 
 	return response, nil
+}
+
+// EnableClusterDeletionProtection enables deletion protection for the given cluster.
+func (t TKEClient) EnableClusterDeletionProtection(clusterID string) error {
+	logrus.Infof("client tke action: EnableClusterDeletionProtection")
+	request := tkeapi.NewEnableClusterDeletionProtectionRequest()
+	request.ClusterId = &clusterID
+	if _, err := t.client.EnableClusterDeletionProtection(request); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DisableClusterDeletionProtection disables deletion protection for the given cluster.
+func (t TKEClient) DisableClusterDeletionProtection(clusterID string) error {
+	logrus.Infof("client tke action: DisableClusterDeletionProtection")
+	request := tkeapi.NewDisableClusterDeletionProtectionRequest()
+	request.ClusterId = &clusterID
+	if _, err := t.client.DisableClusterDeletionProtection(request); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t TKEClient) GetClusterInstances(clusterId string) ([]*tkeapi.Instance, error) {
