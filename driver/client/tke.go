@@ -711,6 +711,9 @@ func (t TKEClient) ModifyClusterVirtualNodePool(clusterId string, nodePoolId str
 	request.ClusterId = &clusterId
 	request.NodePoolId = &nodePoolId
 
+	if fields.Name != nil {
+		request.Name = fields.Name
+	}
 	if fields.SecurityGroupIDs != nil {
 		request.SecurityGroupIds = utils.ParseStrings(*fields.SecurityGroupIDs)
 	}

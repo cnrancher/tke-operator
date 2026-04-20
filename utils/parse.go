@@ -280,6 +280,7 @@ func ParseToSystemDiskInstance(systemDisk tkev1.DataDisk) *cvmapi.SystemDisk {
 // “do not send this key” (unchanged in cloud). Slices use pointer-to-slice so an
 // empty slice can mean “clear labels/taints/SGs” when that slice pointer is non-nil.
 type VirtualNodePoolModifyFields struct {
+	Name               *string
 	SecurityGroupIDs   *[]string
 	Labels             *[]tkev1.VirtualNodeLabel
 	Taints             *[]tkev1.VirtualNodeTaint
@@ -291,15 +292,19 @@ func (f *VirtualNodePoolModifyFields) Empty() bool {
 	if f == nil {
 		return true
 	}
-	return f.SecurityGroupIDs == nil && f.Labels == nil && f.Taints == nil && f.DeletionProtection == nil
+	return f.Name == nil && f.SecurityGroupIDs == nil && f.Labels == nil && f.Taints == nil && f.DeletionProtection == nil
 }
 
-// DiffVirtualNodePoolModifyFields compares desired spec to upstream Describe for the only fields
-// supported by ModifyClusterVirtualNodePool: SecurityGroupIds, Labels, Taints, DeletionProtection.
-// Returns nil when no Modify is needed. If desired.DeletionProtection is nil, deletion
-// protection is not compared (leave cloud as-is).
+// DiffVirtualNodePoolModifyFields compares desired spec to upstream Describe for fields
+// supported by ModifyClusterVirtualNodePool: Name, SecurityGroupIds, Labels, Taints, DeletionProtection.
+// Returns nil when no Modify is needed.
+// Allow-zero rules: empty Name and nil DeletionProtection mean "not sent" (leave cloud as-is).
 func DiffVirtualNodePoolModifyFields(desired, upstream tkev1.VirtualNodePoolDetail) *VirtualNodePoolModifyFields {
 	var f VirtualNodePoolModifyFields
+	if desired.Name != "" && desired.Name != upstream.Name {
+		v := desired.Name
+		f.Name = &v
+	}
 	if !stringSliceEqualUnordered(desired.SecurityGroupIDs, upstream.SecurityGroupIDs) {
 		v := append([]string(nil), desired.SecurityGroupIDs...)
 		f.SecurityGroupIDs = &v
