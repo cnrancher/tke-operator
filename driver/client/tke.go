@@ -779,7 +779,7 @@ func (t TKEClient) GetClusterVirtualNodePoolsFull(clusterId string) ([]tkeapiful
 		return nil, err
 	}
 	raw := resp.GetBody()
-	logrus.Debugf("DescribeClusterVirtualNodePools raw response: %s", string(raw))
+	logrus.Infof("DescribeClusterVirtualNodePools raw response: %s", string(raw))
 	return tkeapifull.ParseDescribeClusterVirtualNodePoolsResponse(raw)
 }
 

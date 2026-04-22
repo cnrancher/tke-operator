@@ -1057,6 +1057,15 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 		NetworkType:        parseNetworkTypeFromProperty(cluster.Property),
 	}
 
+	// Index the existing NodePoolList by NodePoolID so we can preserve fields that the
+	// DescribeClusterNodePools API does not return (e.g. EnableAutoscale).
+	existingNodePoolByID := make(map[string]tkev1.NodePoolDetail, len(configSpec.NodePoolList))
+	for _, np := range configSpec.NodePoolList {
+		if np.NodePoolID != "" {
+			existingNodePoolByID[np.NodePoolID] = np
+		}
+	}
+
 	var nodePoolList []tkev1.NodePoolDetail
 	for _, nodePool := range nodePools {
 		autoScalingGroup, err := driver.ASClient.GetAutoScalingGroups(nodePool.AutoscalingGroupId)
@@ -1071,6 +1080,7 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 			continue
 		}
 
+		existing := existingNodePoolByID[*nodePool.NodePoolId]
 		nodePoolList = append(nodePoolList, tkev1.NodePoolDetail{
 			ClusterID:  *cluster.ClusterId,
 			NodePoolID: *nodePool.NodePoolId,
@@ -1095,6 +1105,8 @@ func FixConfig(driver *tcdriver.Driver, configSpec *tkev1.TKEClusterConfigSpec, 
 				SecurityGroupIDs:        utils.ParseStringsPointer(launchConfiguration.SecurityGroupIds),
 				InstanceChargeType:      *launchConfiguration.InstanceChargeType,
 			},
+			// EnableAutoscale is not returned by DescribeClusterNodePools; preserve from existing spec.
+			EnableAutoscale:    existing.EnableAutoscale,
 			Name:               *nodePool.Name,
 			Labels:             utils.ParseLabelsString(nodePool.Labels),
 			Taints:             utils.ParseTaintsString(nodePool.Taints),
