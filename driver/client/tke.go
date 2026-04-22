@@ -658,17 +658,14 @@ func (t TKEClient) CreateClusterVirtualNodePool(clusterId string, pool tkev1.Vir
 		}
 	}
 	if len(pool.VirtualNodes) > 0 {
-		for i, vn := range pool.VirtualNodes {
+		for _, vn := range pool.VirtualNodes {
 			vnCopy := vn
-			displayName := vnCopy.DisplayName
-			// Tencent Cloud may treat multiple VirtualNodes with the same SubnetId and empty
-			// DisplayName as one node. Assign a unique DisplayName so each entry becomes a node.
-			if displayName == "" {
-				displayName = fmt.Sprintf("node-%d", i)
-			}
 			spec := &tkeapi.VirtualNodeSpec{
-				DisplayName: &displayName,
-				SubnetId:    &vnCopy.SubnetId,
+				SubnetId: &vnCopy.SubnetId,
+			}
+			if vnCopy.DisplayName != "" {
+				dn := vnCopy.DisplayName
+				spec.DisplayName = &dn
 			}
 			for _, tag := range vnCopy.Tags {
 				tagCopy := tag
