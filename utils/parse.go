@@ -327,6 +327,18 @@ func DiffVirtualNodePoolModifyFields(desired, upstream tkev1.VirtualNodePoolDeta
 			f.DeletionProtection = &v
 		}
 	}
+	// ModifyClusterVirtualNodePool SDK decides "nothing is updated" from a subset of
+	// fields and can ignore SecurityGroupIds. Always send Name when anything else
+	// changed so SG-only updates are accepted; unchanged name uses upstream.
+	if !f.Empty() && f.Name == nil {
+		name := upstream.Name
+		if desired.Name != "" {
+			name = desired.Name
+		}
+		if name != "" {
+			f.Name = &name
+		}
+	}
 	if f.Empty() {
 		return nil
 	}
