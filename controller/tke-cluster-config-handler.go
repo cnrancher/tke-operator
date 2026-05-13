@@ -913,12 +913,15 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 		logrus.Infof("cluster endpoint enable")
 		endpointStatus, err := driver.TKEClient.GetClusterEndpointStatus(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable)
 		if err != nil {
+			logrus.Errorf("cluster [%s]: GetClusterEndpointStatus failed clusterID=%s: %v", config.Name, config.Spec.ClusterID, err)
 			return config, err
 		}
 
 		switch *endpointStatus {
 		case tcdriver.EndpointStatusCreated:
+			logrus.Infof("cluster [%s]: GetClusterEndpointStatus=Created, calling createCASecret", config.Name)
 			if err = h.createCASecret(driver, config); err != nil {
+				logrus.Errorf("cluster [%s]: createCASecret failed: %v", config.Name, err)
 				return config, err
 			}
 		case tcdriver.EndpointStatusNotFound:
@@ -1235,6 +1238,7 @@ func (h *Handler) createCASecret(driver *tcdriver.Driver, config *tkev1.TKEClust
 		}
 	}
 
+	logrus.Infof("create CASecret %s %s successfully", config.Namespace, config.Name)
 	return err
 }
 
