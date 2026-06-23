@@ -593,7 +593,9 @@ func (t TKEClient) GetClusterEndpoints(clusterId string) (*tkeapi.DescribeCluste
 	return response, nil
 }
 
-func (t TKEClient) GetClusterEndpointStatus(clusterId string, extranet bool) (*string, error) {
+// GetClusterEndpointStatus returns the endpoint status and an optional error message from TKE.
+// The errorMsg is non-empty only when status is "CreateFailed".
+func (t TKEClient) GetClusterEndpointStatus(clusterId string, extranet bool) (status string, errorMsg string, err error) {
 	logrus.Infof("client tke action: GetClusterEndpointStatus")
 	request := tkeapi.NewDescribeClusterEndpointStatusRequest()
 	request.ClusterId = &clusterId
@@ -601,14 +603,30 @@ func (t TKEClient) GetClusterEndpointStatus(clusterId string, extranet bool) (*s
 
 	response, err := t.client.DescribeClusterEndpointStatus(request)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
 	if response.Response == nil || response.Response.Status == nil {
-		return nil, fmt.Errorf("error while getting response")
+		return "", "", fmt.Errorf("error while getting response")
 	}
 
-	return response.Response.Status, nil
+	if response.Response.ErrorMsg != nil {
+		errorMsg = *response.Response.ErrorMsg
+	}
+	return *response.Response.Status, errorMsg, nil
+}
+
+func (t TKEClient) DeleteClusterEndpoints(clusterId string, extranet bool) error {
+	logrus.Infof("client tke action: DeleteClusterEndpoints")
+	request := tkeapi.NewDeleteClusterEndpointRequest()
+	request.ClusterId = &clusterId
+	request.IsExtranet = tccommon.BoolPtr(extranet)
+
+	if _, err := t.client.DeleteClusterEndpoint(request); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (t TKEClient) CreateClusterEndpoints(spec tkev1.TKEClusterConfigSpec, extranet bool) error {

@@ -31,9 +31,10 @@ const (
 
 // state of endpoint
 const (
-	EndpointStatusCreated  = "Created"
-	EndpointStatusCreating = "Creating"
-	EndpointStatusNotFound = "NotFound"
+	EndpointStatusCreated      = "Created"
+	EndpointStatusCreating     = "Creating"
+	EndpointStatusNotFound     = "NotFound"
+	EndpointStatusCreateFailed = "CreateFailed"
 )
 
 // state of instance
