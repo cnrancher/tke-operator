@@ -911,13 +911,14 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 
 	if !config.Spec.Imported {
 		logrus.Infof("cluster endpoint enable")
-		endpointStatus, err := driver.TKEClient.GetClusterEndpointStatus(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable)
+		endpointStatus, endpointErrMsg, err := driver.TKEClient.GetClusterEndpointStatus(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable)
 		if err != nil {
 			logrus.Errorf("cluster [%s]: GetClusterEndpointStatus failed clusterID=%s: %v", config.Name, config.Spec.ClusterID, err)
 			return config, err
 		}
 
-		switch *endpointStatus {
+		logrus.Infof("cluster [%s] endpoint status is %s", config.Name, endpointStatus)
+		switch endpointStatus {
 		case tcdriver.EndpointStatusCreated:
 			logrus.Infof("cluster [%s]: GetClusterEndpointStatus=Created, calling createCASecret", config.Name)
 			if err = h.createCASecret(driver, config); err != nil {
@@ -955,6 +956,18 @@ func (h *Handler) updateUpstreamClusterState(driver *tcdriver.Driver, config *tk
 			return config, nil
 		case tcdriver.EndpointStatusCreating:
 			logrus.Infof("waiting for cluster [%s] endpoint to finish creating", config.Name)
+			h.tkeEnqueueAfter(config.Namespace, config.Name, waitSecond*time.Second)
+			return config, nil
+		case tcdriver.EndpointStatusCreateFailed:
+			// Endpoint creation failed asynchronously (e.g. service-controller not running).
+			// Delete the failed endpoint to reset state back to NotFound, then re-enqueue so
+			// the NotFound case can re-create it on the next reconcile.
+			logrus.Errorf("cluster [%s] endpoint CreateFailed: %s", config.Name, endpointErrMsg)
+			if delErr := driver.TKEClient.DeleteClusterEndpoints(config.Spec.ClusterID, config.Spec.ClusterEndpoint.Enable); delErr != nil {
+				// Deletion may be rejected if another operation is in progress (e.g. RESOURCEINUSE).
+				// Log and continue: next reconcile will retry.
+				logrus.Warnf("cluster [%s] failed to delete CreateFailed endpoint: %v", config.Name, delErr)
+			}
 			h.tkeEnqueueAfter(config.Namespace, config.Name, waitSecond*time.Second)
 			return config, nil
 		}
