@@ -1277,9 +1277,7 @@ func (h *Handler) waitOrTriggerNodeUpgrade(driver *tcdriver.Driver, config *tkev
 	}
 
 	// Step 2: Determine which nodes are behind the master version.
-	// Only "major" (in-place major-version upgrade) is used, as Rancher only supports
-	// major Kubernetes version upgrades for TKE clusters.
-	instanceIds, err := driver.TKEClient.CheckInstancesUpgradeAble(clusterId, "major")
+	instanceIds, err := driver.TKEClient.CheckInstancesUpgradeAble(clusterId)
 	if err != nil {
 		return false, fmt.Errorf("cluster [%s] failed to check upgradeable instances: %v", config.Name, err)
 	}
@@ -1291,7 +1289,7 @@ func (h *Handler) waitOrTriggerNodeUpgrade(driver *tcdriver.Driver, config *tkev
 	}
 
 	// Step 3: Trigger node upgrade for all eligible instances in a single task.
-	logrus.Infof("cluster [%s] triggering node upgrade (major) for %d instance(s): %v",
+	logrus.Infof("cluster [%s] triggering node upgrade for %d instance(s): %v",
 		config.Name, len(instanceIds), instanceIds)
 	if err := driver.TKEClient.UpgradeClusterInstances(clusterId, "major", instanceIds); err != nil {
 		return false, fmt.Errorf("cluster [%s] failed to trigger node upgrade: %v", config.Name, err)
