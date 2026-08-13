@@ -845,14 +845,12 @@ func (t TKEClient) GetClusterLevelAttribute() (*tkeapi.DescribeClusterLevelAttri
 }
 
 // CheckInstancesUpgradeAble returns the instance IDs of cluster nodes that can be upgraded
-// to match the current master version using the given upgradeType.
-// upgradeType: "major" for in-place major-version upgrade, "hot" for minor-version hot upgrade.
+// to match the current master version.
 // Returns an empty slice when all nodes are already at the target version.
-func (t TKEClient) CheckInstancesUpgradeAble(clusterId, upgradeType string) ([]string, error) {
-	logrus.Infof("client tke action: CheckInstancesUpgradeAble clusterId=%s upgradeType=%s", clusterId, upgradeType)
+func (t TKEClient) CheckInstancesUpgradeAble(clusterId string) ([]string, error) {
+	logrus.Infof("client tke action: CheckInstancesUpgradeAble clusterId=%s", clusterId)
 	request := tkeapi.NewCheckInstancesUpgradeAbleRequest()
 	request.ClusterId = &clusterId
-	request.UpgradeType = &upgradeType
 
 	response, err := t.client.CheckInstancesUpgradeAble(request)
 	if err != nil {
@@ -860,6 +858,12 @@ func (t TKEClient) CheckInstancesUpgradeAble(clusterId, upgradeType string) ([]s
 	}
 	if response.Response == nil {
 		return nil, fmt.Errorf("error while getting response from CheckInstancesUpgradeAble")
+	}
+
+	if body, marshalErr := json.Marshal(response.Response); marshalErr != nil {
+		logrus.Errorf("CheckInstancesUpgradeAble clusterId=%s response=%+v", clusterId, response.Response)
+	} else {
+		logrus.Infof("CheckInstancesUpgradeAble clusterId=%s response=%s", clusterId, string(body))
 	}
 
 	var instanceIds []string
